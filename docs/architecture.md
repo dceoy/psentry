@@ -107,9 +107,10 @@ The final fingerprint is the SHA-256 of canonical JSON containing:
 ```
 
 A differing fingerprint is reviewed only when it represents first observation,
-draft readiness, a new head, a relevant current-head CI failure, or changed
-external activity. This extra decision step prevents a transition from failed
-CI back to success from scheduling a review by itself.
+draft readiness, a new head, a newly added relevant current-head CI failure, or
+changed external activity. Comparing the normalized current and previously
+observed failure sets prevents either a transition back to success or a
+shrinking failure set from scheduling a review by itself.
 
 If a draft-to-ready or recurring CI-failure transition returns to a base
 fingerprint that already has a trusted publication marker, the review
@@ -137,6 +138,7 @@ keys:
         "head_sha": "...",
         "draft": false,
         "ci_digest": "...",
+        "ci_failures": [],
         "last_seen_at": "2026-07-29T12:00:00Z",
         "revision": 3
       },
@@ -155,10 +157,12 @@ keys:
 }
 ```
 
-`observed` may advance for a draft or unchanged PR and records the latest CI
-failure digest so a failure can trigger again after an intervening successful
-observation. Its monotonic per-PR revision gives repeated transitions a stable,
-unique review fingerprint without weakening marker-based retry recovery.
+`observed` may advance for a draft or unchanged PR and records both the latest
+normalized CI failure set and its digest. A review is triggered only when the
+set gains a failure, while an intervening successful observation allows the
+same failure to trigger again later. Its monotonic per-PR revision gives
+repeated transitions a stable, unique review fingerprint without weakening
+marker-based retry recovery.
 `reviewed` advances only after GitHub accepts the comment-only review or when
 an already-published exact marker is recovered. Oracle and GitHub failures
 never advance it.

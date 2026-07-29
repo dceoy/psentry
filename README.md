@@ -108,10 +108,10 @@ systemctl --user list-timers oracle-pr-sentry.timer
 ## Configuration
 
 The default configuration file is
-`~/.config/oracle-pr-sentry/env`. It is sourced as trusted Bash and is also
-loaded by the systemd unit as an `EnvironmentFile`. Keep it owned by the user,
-non-writable by group or other users, and limited to simple assignments that
-both parsers understand:
+`~/.config/oracle-pr-sentry/env`. The executable validates its owner and mode
+before sourcing it as trusted Bash; the systemd unit does not load it into the
+process environment. Keep it owned by the user and non-writable by group or
+other users:
 
 ```console
 chmod 600 ~/.config/oracle-pr-sentry/env

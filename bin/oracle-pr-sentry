@@ -448,6 +448,21 @@ load_state() {
           (has("ci_digest") | not)
           or (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
         )
+        and (
+          (has("ci_failures") | not)
+          or (
+            .ci_failures
+            | type == "array"
+            and all(
+              .[];
+              type == "object"
+              and (.name | type == "string")
+              and (.workflow | type == "string")
+              and (.result | type == "string")
+              and (.details_url | type == "string")
+            )
+          )
+        )
       )
       and (
         (has("reviewed") | not)
@@ -502,7 +517,8 @@ state_observe() {
   local head_sha=$3
   local draft=$4
   local ci_digest=$5
-  local seen_at=$6
+  local ci_failures=$6
+  local seen_at=$7
 
   local updated_state
 
@@ -512,6 +528,7 @@ state_observe() {
     --arg head_sha "$head_sha" \
     --argjson draft "$draft" \
     --arg ci_digest "$ci_digest" \
+    --argjson ci_failures "$ci_failures" \
     --arg seen_at "$seen_at" '
       (.prs[$key].observed.revision // 0) as $revision
       | .prs[$key] = ((.prs[$key] // {}) + {
@@ -520,6 +537,7 @@ state_observe() {
           head_sha: $head_sha,
           draft: $draft,
           ci_digest: $ci_digest,
+          ci_failures: $ci_failures,
           last_seen_at: $seen_at,
           revision: ($revision + 1)
         }
@@ -893,7 +911,7 @@ record_success() {
   timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
   if ! state_observe \
     "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false \
-    "$SNAPSHOT_CI_DIGEST" "$timestamp"; then
+    "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$timestamp"; then
     return 1
   fi
   if ! state_mark_reviewed \
@@ -1042,7 +1060,8 @@ process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
   local reviewed_fingerprint reviewed_head reviewed_external
-  local observed_ci observed_draft observed_revision reason publish_status
+  local observed_ci observed_ci_json observed_draft observed_revision
+  local new_ci_failure_count reason publish_status
 
   repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") || return 1
   number=$(jq -r '.number // 0' <<<"$candidate") || return 1
@@ -1079,16 +1098,29 @@ process_candidate() {
   reviewed_head=$(jq -r '.reviewed.head_sha // ""' <<<"$old_entry") || return 1
   reviewed_external=$(jq -r '.reviewed.external_digest // ""' <<<"$old_entry") || return 1
   observed_ci=$(jq -r '.observed.ci_digest // .reviewed.ci_digest // ""' <<<"$old_entry") || return 1
+  observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<<"$old_entry") || return 1
   observed_draft=$(jq -r '.observed.draft // false' <<<"$old_entry") || return 1
   observed_revision=$(jq -r '.observed.revision // 0' <<<"$old_entry") || return 1
   now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+  if jq -e '.observed | has("ci_failures")' <<<"$old_entry" >/dev/null; then
+    new_ci_failure_count=$(jq -cn \
+      --argjson current "$SNAPSHOT_CI_JSON" \
+      --argjson observed "$observed_ci_json" '
+        ($current - $observed) | length
+      ') || return 1
+  elif [[ "$observed_ci" == "$SNAPSHOT_CI_DIGEST" ]]; then
+    new_ci_failure_count=0
+  else
+    new_ci_failure_count=$SNAPSHOT_CI_FAILURE_COUNT
+  fi
 
   if [[ "$SNAPSHOT_DRAFT" == "true" ]]; then
     log INFO "ineligible $SNAPSHOT_KEY: draft observed"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" true \
-        "$SNAPSHOT_CI_DIGEST" "$now" ||
+        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
         ! persist_state; then
         return 1
       fi
@@ -1104,8 +1136,7 @@ process_candidate() {
     reason="new-pr"
   elif [[ "$reviewed_head" != "$SNAPSHOT_HEAD" ]]; then
     reason="head-sha-changed"
-  elif ((SNAPSHOT_CI_FAILURE_COUNT > 0)) &&
-    [[ "$observed_ci" != "$SNAPSHOT_CI_DIGEST" ]]; then
+  elif ((new_ci_failure_count > 0)); then
     reason="ci-failure"
   elif [[ "$reviewed_fingerprint" == "$SNAPSHOT_FINGERPRINT" ]]; then
     reason=""
@@ -1120,7 +1151,7 @@ process_candidate() {
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false \
-        "$SNAPSHOT_CI_DIGEST" "$now" ||
+        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
         ! persist_state; then
         return 1
       fi

@@ -113,6 +113,62 @@ setup() {
   [[ "$output" == *"ci-failure"* ]]
 }
 
+@test "CI review triggers only when the observed failure set gains a check" {
+  two_failures="$BATS_TEST_TMPDIR/two-failures.json"
+  one_failure="$BATS_TEST_TMPDIR/one-failure.json"
+  replacement_failure="$BATS_TEST_TMPDIR/replacement-failure.json"
+  jq '
+    .statusCheckRollup = [
+      {
+        name: "lint",
+        workflowName: "CI",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/octo/example/actions/runs/lint"
+      },
+      {
+        name: "test",
+        workflowName: "CI",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/octo/example/actions/runs/test"
+      }
+    ]
+  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" >"$two_failures"
+  jq '
+    .statusCheckRollup = [.statusCheckRollup[] | select(.name == "test")]
+  ' "$two_failures" >"$one_failure"
+  jq '
+    .statusCheckRollup += [
+      {
+        name: "typecheck",
+        workflowName: "CI",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/octo/example/actions/runs/typecheck"
+      }
+    ]
+  ' "$one_failure" >"$replacement_failure"
+
+  export GH_FIXTURE="$two_failures"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+
+  export GH_FIXTURE="$one_failure"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+
+  export GH_FIXTURE="$replacement_failure"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"ci-failure"* ]]
+}
+
 @test "new external discussion activity schedules a new review" {
   invoke_sentry
   [ "$status" -eq 0 ]
@@ -338,4 +394,27 @@ setup() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"required command not found: not-an-oracle"* ]]
+}
+
+@test "systemd leaves trusted config loading to the executable" {
+  run grep -F "EnvironmentFile=" \
+    "$TEST_ROOT/systemd/oracle-pr-sentry.service"
+
+  [ "$status" -eq 1 ]
+}
+
+@test "an unsafe config file is rejected before it is sourced" {
+  config_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  config_file="$config_directory/env"
+  side_effect="$BATS_TEST_TMPDIR/config-was-sourced"
+  mkdir -p -- "$config_directory"
+  printf 'touch %q\n' "$side_effect" >"$config_file"
+  chmod 666 "$config_file"
+  export ORACLE_PR_SENTRY_CONFIG_FILE="$config_file"
+
+  invoke_sentry --dry-run
+
+  [ "$status" -ne 0 ]
+  [ ! -e "$side_effect" ]
+  [[ "$output" == *"trusted file must not be group- or world-writable"* ]]
 }
