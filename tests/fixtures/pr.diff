@@ -1,0 +1,11 @@
+diff --git a/src/example.sh b/src/example.sh
+index 3a32a0d..73f2821 100755
+--- a/src/example.sh
++++ b/src/example.sh
+@@ -1,2 +1,5 @@
+ #!/usr/bin/env bash
+-printf 'old\n'
++set -euo pipefail
++
++message=${1:-hello}
++printf '%s\n' "$message"

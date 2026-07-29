@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${GH_SHIM_STATE_DIR:?GH_SHIM_STATE_DIR is required}"
+: "${GH_FIXTURE:?GH_FIXTURE is required}"
+
+mkdir -p -- "$GH_SHIM_STATE_DIR"
+printf '%q ' "$@" >>"$GH_SHIM_STATE_DIR/gh.log"
+printf '\n' >>"$GH_SHIM_STATE_DIR/gh.log"
+
+emit_candidates() {
+  local numbers=$1
+  local draft=$2
+  local repository=${GH_REPOSITORY:-octo/example}
+
+  if [[ -z "$numbers" ]]; then
+    printf '[]\n'
+    return
+  fi
+
+  printf '%s\n' "${numbers//,/$'\n'}" |
+    jq -Rsc \
+      --arg repository "$repository" \
+      --argjson draft "$draft" '
+        split("\n")
+        | map(select(length > 0) | tonumber)
+        | map({
+            number: .,
+            repository: {nameWithOwner: $repository},
+            url: ("https://github.com/" + $repository + "/pull/" + (tostring)),
+            isDraft: $draft
+          })
+      '
+}
+
+append_posted_review() {
+  local fixture=$1
+  local number=$2
+  local posted_file="$GH_SHIM_STATE_DIR/posted-$number.md"
+
+  if [[ -s "$posted_file" && "${GH_INCLUDE_POSTED_MARKER:-1}" == 1 ]]; then
+    jq --rawfile body "$posted_file" '
+      .reviews += [{
+        id: "PRR_posted",
+        author: {login: "sentry-bot"},
+        submittedAt: "2026-07-29T12:00:00Z",
+        state: "COMMENTED",
+        body: $body,
+        commit: {oid: .headRefOid}
+      }]
+    ' "$fixture"
+  else
+    jq . "$fixture"
+  fi
+}
+
+case "${1:-} ${2:-}" in
+  "api user")
+    printf 'sentry-bot\n'
+    ;;
+  "search prs")
+    if [[ "${3:-}" == "draft:false" ]]; then
+      emit_candidates "${GH_READY_NUMBERS:-1}" false
+    elif [[ "${3:-}" == "draft:true" ]]; then
+      emit_candidates "${GH_DRAFT_NUMBERS:-}" true
+    else
+      printf 'unexpected search query\n' >&2
+      exit 2
+    fi
+    ;;
+  "pr view")
+    number=${3:?missing PR number}
+    if [[ "${GH_FAIL_PR:-}" == "$number" ]]; then
+      printf 'simulated PR metadata failure\n' >&2
+      exit 1
+    fi
+
+    fixture_variable="GH_FIXTURE_$number"
+    fixture=${!fixture_variable:-$GH_FIXTURE}
+    view_count_file="$GH_SHIM_STATE_DIR/view-count-$number"
+    view_count=0
+    [[ -f "$view_count_file" ]] && view_count=$(<"$view_count_file")
+    ((view_count += 1))
+    printf '%s\n' "$view_count" >"$view_count_file"
+
+    append_posted_review "$fixture" "$number" |
+      jq --argjson number "$number" \
+        --arg repository "${GH_REPOSITORY:-octo/example}" '
+          .number = $number
+          | .url = ("https://github.com/" + $repository + "/pull/" + ($number | tostring))
+        ' |
+      if [[ "${GH_RACE_HEAD:-0}" == 1 && "$view_count" -gt 1 ]]; then
+        jq '.headRefOid = "cccccccccccccccccccccccccccccccccccccccc"'
+      else
+        jq .
+      fi
+    ;;
+  "pr diff")
+    if [[ "${GH_DIFF_FAIL:-0}" == 1 ]]; then
+      printf 'simulated diff failure\n' >&2
+      exit 1
+    fi
+    printf '%s\n' "$(<"${GH_DIFF_FIXTURE:?GH_DIFF_FIXTURE is required}")"
+    ;;
+  "pr review")
+    number=${3:?missing PR number}
+    shift 3
+    body_file=""
+    while (($#)); do
+      if [[ "$1" == "--body-file" ]]; then
+        body_file=$2
+        shift 2
+      else
+        shift
+      fi
+    done
+    [[ -n "$body_file" ]] || {
+      printf 'missing --body-file\n' >&2
+      exit 2
+    }
+    if [[ "${GH_REVIEW_FAIL:-0}" == 1 ]]; then
+      printf 'simulated review failure\n' >&2
+      exit 1
+    fi
+    cp -- "$body_file" "$GH_SHIM_STATE_DIR/posted-$number.md"
+    count_file="$GH_SHIM_STATE_DIR/review-count"
+    count=0
+    [[ -f "$count_file" ]] && count=$(<"$count_file")
+    ((count += 1))
+    printf '%s\n' "$count" >"$count_file"
+    ;;
+  "api --paginate")
+    printf '[[]]\n'
+    ;;
+  *)
+    printf 'unexpected gh invocation: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac

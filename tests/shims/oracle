@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${GH_SHIM_STATE_DIR:?GH_SHIM_STATE_DIR is required}"
+
+printf '%q ' "$@" >>"$GH_SHIM_STATE_DIR/oracle.log"
+printf '\n' >>"$GH_SHIM_STATE_DIR/oracle.log"
+
+output_file=""
+while (($#)); do
+  case "$1" in
+    --write-output)
+      output_file=$2
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$output_file" ]] || {
+  printf 'missing --write-output\n' >&2
+  exit 2
+}
+
+if [[ -n "${ORACLE_SLEEP:-}" ]]; then
+  sleep "$ORACLE_SLEEP"
+fi
+if [[ "${ORACLE_EXIT_STATUS:-0}" != 0 ]]; then
+  exit "$ORACLE_EXIT_STATUS"
+fi
+if [[ "${ORACLE_EMPTY_OUTPUT:-0}" == 1 ]]; then
+  : >"$output_file"
+else
+  printf '%s\n' "${ORACLE_REVIEW_TEXT:-No blocking findings were found.}" >"$output_file"
+fi

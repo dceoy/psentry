@@ -1,0 +1,15 @@
+[Unit]
+Description=Oracle pull request review sentry
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/oracle-pr-sentry/env
+ExecStart=%h/.local/bin/oracle-pr-sentry
+RuntimeMaxSec=35min
+TimeoutStartSec=35min
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
