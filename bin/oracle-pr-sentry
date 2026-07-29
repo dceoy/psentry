@@ -665,7 +665,7 @@ collect_snapshot() {
   local raw_pr="$work_directory/pr.json"
   local review_pages="$work_directory/review-comments.json"
   local snapshot_file="$work_directory/snapshot.json"
-  local marker_prefix="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY "
+  local marker_prefix="<!-- $PROGRAM_NAME:v1 "
 
   if ! gh pr view "$number" --repo "$repository" --json \
     number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,statusCheckRollup,reviews,comments,files \
@@ -689,7 +689,24 @@ collect_snapshot() {
       def text:
         (. // "") | tostring;
       def trusted_marker:
-        .author == $sentry_login and (.body | contains($marker_prefix));
+        . as $activity
+        | if $activity.author != $sentry_login
+            or ($activity.body | indices($marker_prefix) | length) != 1
+          then null
+          else
+            (
+              try (
+                $activity.body
+                | capture(
+                    "(?:^|\\n)<!-- oracle-pr-sentry:v1 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) -->\\n?$"
+                  )
+              ) catch null
+            ) as $marker
+            | if $marker != null and $marker.identity == $sentry_identity
+              then $marker
+              else null
+              end
+          end;
 
       ($review_pages | flatten) as $inline_comments
       | (
@@ -776,21 +793,12 @@ collect_snapshot() {
             $activities[] | select(.kind == "review_comment")
           ],
           external_activity: [
-            $activities[] | select((trusted_marker) | not)
+            $activities[] | select((trusted_marker) == null)
           ],
           publications: [
             $activities[]
-            | select(trusted_marker)
-            | .body
-            | scan(
-                "<!-- oracle-pr-sentry:v1 identity=([A-Za-z0-9._-]+) fingerprint=([0-9a-f]{64}) head=([0-9A-Fa-f]{7,64}) -->"
-              )
-            | {
-                identity: .[0],
-                fingerprint: .[1],
-                head_sha: .[2]
-              }
-            | select(.identity == $sentry_identity)
+            | trusted_marker
+            | select(. != null)
           ],
           files: [
             (.files // [])[] | {
@@ -877,7 +885,11 @@ snapshot_facts() {
     ]
   ' "$snapshot_file") || return 1
   SNAPSHOT_CI_FAILURE_COUNT=$(jq 'length' <<<"$SNAPSHOT_CI_JSON") || return 1
-  SNAPSHOT_CI_DIGEST=$(digest_text "$SNAPSHOT_CI_JSON") || return 1
+  SNAPSHOT_CI_IDENTITIES_JSON=$(jq -cS '
+    map({workflow, name})
+    | unique_by([.workflow, .name])
+  ' <<<"$SNAPSHOT_CI_JSON") || return 1
+  SNAPSHOT_CI_DIGEST=$(digest_text "$SNAPSHOT_CI_IDENTITIES_JSON") || return 1
   SNAPSHOT_EXTERNAL_JSON=$(jq -cS '.external_activity' "$snapshot_file") || return 1
   SNAPSHOT_EXTERNAL_DIGEST=$(digest_text "$SNAPSHOT_EXTERNAL_JSON") || return 1
   SNAPSHOT_FINGERPRINT=$(jq -cnS \
@@ -892,6 +904,7 @@ snapshot_facts() {
         external_digest: $external_digest
       }
     ' | sha256sum | awk '{print $1}') || return 1
+  SNAPSHOT_INPUT_FINGERPRINT=$SNAPSHOT_FINGERPRINT
   SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
 }
 
@@ -998,6 +1011,10 @@ run_oracle_review() {
     log ERROR "Oracle produced empty or invalid Markdown for $repository#$number"
     return 1
   fi
+  if grep -Fq -- "<!-- $PROGRAM_NAME:v1 " "$output_file"; then
+    log ERROR "Oracle output contains the reserved publication marker prefix for $repository#$number"
+    return 1
+  fi
 
   ORACLE_OUTPUT_FILE=$output_file
 }
@@ -1009,6 +1026,8 @@ publish_review() {
   local fresh_directory="$work_directory/fresh"
   local initial_head=$SNAPSHOT_HEAD
   local initial_fingerprint=$SNAPSHOT_FINGERPRINT
+  local initial_input_fingerprint=$SNAPSHOT_INPUT_FINGERPRINT
+  local initial_marker=$SNAPSHOT_MARKER
   local publication_file="$work_directory/publication.md"
   local publication_size
 
@@ -1034,10 +1053,19 @@ publish_review() {
 
   if snapshot_has_publication "$fresh_snapshot" "$initial_fingerprint" "$initial_head"; then
     log INFO "matching GitHub marker appeared during review; reconciling local state"
-    SNAPSHOT_HEAD=$initial_head
-    SNAPSHOT_FINGERPRINT=$initial_fingerprint
     return 2
   fi
+
+  if ! snapshot_facts "$fresh_snapshot"; then
+    log ERROR "failed to calculate fresh snapshot facts for $repository#$number"
+    return 1
+  fi
+  if [[ "$SNAPSHOT_INPUT_FINGERPRINT" != "$initial_input_fingerprint" ]]; then
+    log INFO "discarding stale review for $repository#$number; review inputs changed"
+    return 1
+  fi
+  SNAPSHOT_FINGERPRINT=$initial_fingerprint
+  SNAPSHOT_MARKER=$initial_marker
 
   if ! {
     printf '%s\n\n' "$(<"$ORACLE_OUTPUT_FILE")"
@@ -1111,7 +1139,10 @@ process_candidate() {
     new_ci_failure_count=$(jq -cn \
       --argjson current "$SNAPSHOT_CI_JSON" \
       --argjson observed "$observed_ci_json" '
-        ($current - $observed) | length
+        def identities:
+          map({workflow, name})
+          | unique_by([.workflow, .name]);
+        (($current | identities) - ($observed | identities)) | length
       ') || return 1
   elif [[ "$observed_ci" == "$SNAPSHOT_CI_DIGEST" ]]; then
     new_ci_failure_count=0

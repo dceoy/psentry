@@ -112,6 +112,14 @@ case "${1:-} ${2:-}" in
         ' |
       if [[ "${GH_RACE_HEAD:-0}" == 1 && "$view_count" -gt 1 ]]; then
         jq '.headRefOid = "cccccccccccccccccccccccccccccccccccccccc"'
+      elif [[ "${GH_RACE_ACTIVITY:-0}" == 1 && "$view_count" -gt 1 ]]; then
+        jq '.comments += [{
+          id: "comment-race",
+          author: {login: "reviewer"},
+          createdAt: "2026-07-29T13:00:00Z",
+          updatedAt: "2026-07-29T13:00:00Z",
+          body: "New review input arrived while Oracle was running."
+        }]'
       else
         jq .
       fi

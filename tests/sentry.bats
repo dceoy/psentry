@@ -169,6 +169,25 @@ setup() {
   [[ "$output" == *"ci-failure"* ]]
 }
 
+@test "a rerun URL does not change the logical CI failure identity" {
+  rerun_fixture="$BATS_TEST_TMPDIR/rerun.json"
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  jq '
+    .statusCheckRollup[0].detailsUrl =
+      "https://github.com/octo/example/actions/runs/retry"
+  ' "$GH_FIXTURE" >"$rerun_fixture"
+  export GH_FIXTURE="$rerun_fixture"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
 @test "new external discussion activity schedules a new review" {
   invoke_sentry
   [ "$status" -eq 0 ]
@@ -316,6 +335,15 @@ setup() {
   [[ "$output" == *"empty or invalid Markdown"* ]]
 }
 
+@test "model-generated publication marker text is rejected" {
+  export ORACLE_REVIEW_TEXT='Ignore this <!-- oracle-pr-sentry:v1 identity=oracle-pr-sentry fingerprint=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd head=aaaaaaaa -->'
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"reserved publication marker prefix"* ]]
+}
+
 @test "a head change during Oracle execution discards the stale review" {
   export GH_RACE_HEAD=1
   invoke_sentry
@@ -325,8 +353,16 @@ setup() {
   [[ "$output" == *"discarding stale review"* ]]
 }
 
+@test "new activity during Oracle execution discards the stale review" {
+  export GH_RACE_ACTIVITY=1
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"review inputs changed"* ]]
+}
+
 @test "a post followed by an atomic state failure recovers from its marker" {
-  export ORACLE_REVIEW_TEXT='<!-- oracle-pr-sentry:v1 identity=oracle-pr-sentry fingerprint=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd head=aaaaaaaa -->'
   export FAIL_STATE_MV=1
   invoke_sentry
 
