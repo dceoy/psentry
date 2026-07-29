@@ -14,6 +14,7 @@ SOURCE_ROOT="$(dirname -- "$SCRIPT_DIR")"
 
 DRY_RUN_CLI=""
 RUN_TMP=""
+RUN_TMP_OWNED=0
 STATE_JSON=""
 SENTRY_LOGIN=""
 ORACLE_EXTRA_ARGS=()
@@ -367,7 +368,24 @@ load_oracle_extra_args() {
 }
 
 prepare_runtime() {
-  local lock_directory state_directory
+  local dry_run_root lock_directory state_directory
+
+  if ((ORACLE_PR_SENTRY_DRY_RUN)); then
+    dry_run_root=${TMPDIR:-/tmp}
+    while [[ "$dry_run_root" != "/" && "$dry_run_root" == */ ]]; do
+      dry_run_root=${dry_run_root%/}
+    done
+    [[ "$dry_run_root" == /* && -d "$dry_run_root" ]] ||
+      die "temporary directory root must be an existing absolute directory: $dry_run_root"
+    if ! RUN_TMP=$(mktemp -d -- "$dry_run_root/$PROGRAM_NAME-dry-run.XXXXXXXX"); then
+      die "failed to create isolated dry-run workspace"
+    fi
+    [[ "$RUN_TMP" == "$dry_run_root"/"$PROGRAM_NAME"-dry-run.* &&
+      -d "$RUN_TMP" && ! -L "$RUN_TMP" ]] ||
+      die "dry-run workspace was created outside the temporary directory root"
+    RUN_TMP_OWNED=1
+    return 0
+  fi
 
   state_directory=$(dirname -- "$ORACLE_PR_SENTRY_STATE_FILE")
   lock_directory=$(dirname -- "$ORACLE_PR_SENTRY_LOCK_FILE")
@@ -385,11 +403,11 @@ prepare_runtime() {
   RUN_TMP=$(mktemp -d -- "$ORACLE_PR_SENTRY_RUNTIME_DIR/run.XXXXXXXX")
   [[ "$RUN_TMP" == "$ORACLE_PR_SENTRY_RUNTIME_DIR"/run.* ]] ||
     die "temporary directory was created outside the runtime directory"
+  RUN_TMP_OWNED=1
 }
 
 cleanup() {
-  if [[ -n "$RUN_TMP" && -d "$RUN_TMP" &&
-    "$RUN_TMP" == "$ORACLE_PR_SENTRY_RUNTIME_DIR"/run.* ]]; then
+  if ((RUN_TMP_OWNED)) && [[ -n "$RUN_TMP" && -d "$RUN_TMP" ]]; then
     rm -rf -- "$RUN_TMP"
   fi
 }
@@ -404,7 +422,9 @@ load_state() {
     die "state file must be a regular, non-symlink file: $ORACLE_PR_SENTRY_STATE_FILE"
   [[ "$(stat -c '%u' -- "$ORACLE_PR_SENTRY_STATE_FILE")" == "$(id -u)" ]] ||
     die "state file must be owned by the current user"
-  chmod 600 -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
+    chmod 600 -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  fi
 
   if ! jq -e '
     type == "object"
@@ -420,6 +440,14 @@ load_state() {
         and (.head_sha | type == "string")
         and (.draft | type == "boolean")
         and (.last_seen_at | type == "string")
+        and (
+          (has("revision") | not)
+          or (.revision | type == "number" and floor == . and . >= 0)
+        )
+        and (
+          (has("ci_digest") | not)
+          or (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
+        )
       )
       and (
         (has("reviewed") | not)
@@ -473,7 +501,8 @@ state_observe() {
   local url=$2
   local head_sha=$3
   local draft=$4
-  local seen_at=$5
+  local ci_digest=$5
+  local seen_at=$6
 
   local updated_state
 
@@ -482,13 +511,17 @@ state_observe() {
     --arg url "$url" \
     --arg head_sha "$head_sha" \
     --argjson draft "$draft" \
+    --arg ci_digest "$ci_digest" \
     --arg seen_at "$seen_at" '
-      .prs[$key] = ((.prs[$key] // {}) + {
+      (.prs[$key].observed.revision // 0) as $revision
+      | .prs[$key] = ((.prs[$key] // {}) + {
         url: $url,
         observed: {
           head_sha: $head_sha,
           draft: $draft,
-          last_seen_at: $seen_at
+          ci_digest: $ci_digest,
+          last_seen_at: $seen_at,
+          revision: ($revision + 1)
         }
       })
     ' <<<"$STATE_JSON"); then
@@ -776,6 +809,24 @@ digest_text() {
   printf '%s' "$1" | sha256sum | awk '{print $1}'
 }
 
+trigger_fingerprint() {
+  local base_fingerprint=$1
+  local reason=$2
+  local observed_revision=$3
+
+  jq -cnS \
+    --arg base_fingerprint "$base_fingerprint" \
+    --arg reason "$reason" \
+    --argjson observed_revision "$observed_revision" '
+      {
+        schema_version: 1,
+        base_fingerprint: $base_fingerprint,
+        reason: $reason,
+        observed_revision: $observed_revision
+      }
+    ' | sha256sum | awk '{print $1}'
+}
+
 snapshot_facts() {
   local snapshot_file=$1
 
@@ -841,7 +892,8 @@ record_success() {
 
   timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
   if ! state_observe \
-    "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false "$timestamp"; then
+    "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false \
+    "$SNAPSHOT_CI_DIGEST" "$timestamp"; then
     return 1
   fi
   if ! state_mark_reviewed \
@@ -989,8 +1041,8 @@ publish_review() {
 process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
-  local reviewed_fingerprint reviewed_head reviewed_ci reviewed_external
-  local observed_draft reason publish_status
+  local reviewed_fingerprint reviewed_head reviewed_external
+  local observed_ci observed_draft observed_revision reason publish_status
 
   repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") || return 1
   number=$(jq -r '.number // 0' <<<"$candidate") || return 1
@@ -1025,15 +1077,18 @@ process_candidate() {
   old_entry=$(jq -c --arg key "$SNAPSHOT_KEY" '.prs[$key] // {}' <<<"$STATE_JSON") || return 1
   reviewed_fingerprint=$(jq -r '.reviewed.fingerprint // ""' <<<"$old_entry") || return 1
   reviewed_head=$(jq -r '.reviewed.head_sha // ""' <<<"$old_entry") || return 1
-  reviewed_ci=$(jq -r '.reviewed.ci_digest // ""' <<<"$old_entry") || return 1
   reviewed_external=$(jq -r '.reviewed.external_digest // ""' <<<"$old_entry") || return 1
+  observed_ci=$(jq -r '.observed.ci_digest // .reviewed.ci_digest // ""' <<<"$old_entry") || return 1
   observed_draft=$(jq -r '.observed.draft // false' <<<"$old_entry") || return 1
+  observed_revision=$(jq -r '.observed.revision // 0' <<<"$old_entry") || return 1
   now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
   if [[ "$SNAPSHOT_DRAFT" == "true" ]]; then
     log INFO "ineligible $SNAPSHOT_KEY: draft observed"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-      if ! state_observe "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" true "$now" ||
+      if ! state_observe \
+        "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" true \
+        "$SNAPSHOT_CI_DIGEST" "$now" ||
         ! persist_state; then
         return 1
       fi
@@ -1043,19 +1098,17 @@ process_candidate() {
 
   log INFO "eligible $SNAPSHOT_KEY at $SNAPSHOT_HEAD"
 
-  if [[ "$reviewed_fingerprint" == "$SNAPSHOT_FINGERPRINT" ]]; then
-    reason=""
+  if [[ "$observed_draft" == "true" ]]; then
+    reason="draft-to-ready"
   elif [[ -z "$reviewed_fingerprint" ]]; then
-    if [[ "$observed_draft" == "true" ]]; then
-      reason="draft-to-ready"
-    else
-      reason="new-pr"
-    fi
+    reason="new-pr"
   elif [[ "$reviewed_head" != "$SNAPSHOT_HEAD" ]]; then
     reason="head-sha-changed"
   elif ((SNAPSHOT_CI_FAILURE_COUNT > 0)) &&
-    [[ "$reviewed_ci" != "$SNAPSHOT_CI_DIGEST" ]]; then
+    [[ "$observed_ci" != "$SNAPSHOT_CI_DIGEST" ]]; then
     reason="ci-failure"
+  elif [[ "$reviewed_fingerprint" == "$SNAPSHOT_FINGERPRINT" ]]; then
+    reason=""
   elif [[ "$reviewed_external" != "$SNAPSHOT_EXTERNAL_DIGEST" ]]; then
     reason="external-activity"
   else
@@ -1065,12 +1118,25 @@ process_candidate() {
   if [[ -z "$reason" ]]; then
     log INFO "unchanged $SNAPSHOT_KEY: no meaningful update"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-      if ! state_observe "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false "$now" ||
+      if ! state_observe \
+        "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false \
+        "$SNAPSHOT_CI_DIGEST" "$now" ||
         ! persist_state; then
         return 1
       fi
     fi
     return
+  fi
+
+  if [[ "$reason" == "draft-to-ready" || "$reason" == "ci-failure" ]] &&
+    snapshot_has_publication \
+      "$SNAPSHOT_FILE" "$SNAPSHOT_FINGERPRINT" "$SNAPSHOT_HEAD"; then
+    if ! SNAPSHOT_FINGERPRINT=$(trigger_fingerprint \
+      "$SNAPSHOT_FINGERPRINT" "$reason" "$observed_revision"); then
+      log ERROR "failed to calculate transition fingerprint for $SNAPSHOT_KEY"
+      return 1
+    fi
+    SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
   fi
 
   if snapshot_has_publication "$SNAPSHOT_FILE" "$SNAPSHOT_FINGERPRINT" "$SNAPSHOT_HEAD"; then

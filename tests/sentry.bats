@@ -61,10 +61,49 @@ setup() {
   [[ "$output" == *"draft-to-ready"* ]]
 }
 
+@test "a reviewed PR becoming draft and ready again schedules another review" {
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_READY_NUMBERS=
+  export GH_DRAFT_NUMBERS=1
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+
+  export GH_READY_NUMBERS=1
+  export GH_DRAFT_NUMBERS=
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"draft-to-ready"* ]]
+}
+
 @test "CI moving from pending to failure changes the meaningful fingerprint" {
   export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-pending.json"
   invoke_sentry
   [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"ci-failure"* ]]
+}
+
+@test "the same CI failure recurring after success schedules another review" {
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
 
   export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
   invoke_sentry
@@ -255,6 +294,29 @@ setup() {
   grep -q -- '--state open' "$GH_SHIM_STATE_DIR/gh.log"
   grep -q -- '--archived=false' "$GH_SHIM_STATE_DIR/gh.log"
   grep -q -- 'draft:false' "$GH_SHIM_STATE_DIR/gh.log"
+}
+
+@test "dry-run leaves configured storage and state permissions unchanged" {
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  chmod 640 "$ORACLE_PR_SENTRY_STATE_FILE"
+  state_digest=$(sha256sum "$ORACLE_PR_SENTRY_STATE_FILE" | awk '{print $1}')
+  dry_cache="$BATS_TEST_TMPDIR/dry-cache"
+  dry_runtime="$BATS_TEST_TMPDIR/dry-runtime"
+  dry_lock="$BATS_TEST_TMPDIR/dry-lock/sentry.lock"
+  export ORACLE_PR_SENTRY_CACHE_DIR="$dry_cache"
+  export ORACLE_PR_SENTRY_RUNTIME_DIR="$dry_runtime"
+  export ORACLE_PR_SENTRY_LOCK_FILE="$dry_lock"
+
+  invoke_sentry --dry-run
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$dry_cache" ]
+  [ ! -e "$dry_runtime" ]
+  [ ! -e "$(dirname "$dry_lock")" ]
+  [ "$(stat -c '%a' "$ORACLE_PR_SENTRY_STATE_FILE")" = 640 ]
+  [ "$(sha256sum "$ORACLE_PR_SENTRY_STATE_FILE" | awk '{print $1}')" = "$state_digest" ]
 }
 
 @test "a transient error for one PR does not stop remaining candidates" {

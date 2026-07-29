@@ -95,7 +95,8 @@ oracle-pr-sentry --dry-run
 
 Dry-run mode performs live GitHub discovery and fingerprint decisions. It still
 validates all required commands, but it does not invoke Oracle, post to GitHub,
-or alter local state.
+or alter configured state, cache, runtime, or lock storage. Temporary discovery
+files use an isolated workspace that is removed when the pass exits.
 
 Enable the 15-minute timer:
 

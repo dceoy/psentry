@@ -111,6 +111,12 @@ draft readiness, a new head, a relevant current-head CI failure, or changed
 external activity. This extra decision step prevents a transition from failed
 CI back to success from scheduling a review by itself.
 
+If a draft-to-ready or recurring CI-failure transition returns to a base
+fingerprint that already has a trusted publication marker, the review
+fingerprint additionally hashes the trigger reason and the prior observed
+revision. This distinguishes the new event from the older review while keeping
+the derived marker stable across publication/state-write recovery.
+
 The pull request title, body, files, checks, and discussion remain in the
 metadata supplied to Oracle. Code changes are represented by the head SHA;
 labels, assignees, milestones, and generic GitHub `updatedAt` are intentionally
@@ -130,7 +136,9 @@ keys:
       "observed": {
         "head_sha": "...",
         "draft": false,
-        "last_seen_at": "2026-07-29T12:00:00Z"
+        "ci_digest": "...",
+        "last_seen_at": "2026-07-29T12:00:00Z",
+        "revision": 3
       },
       "reviewed": {
         "fingerprint": "...",
@@ -147,9 +155,13 @@ keys:
 }
 ```
 
-`observed` may advance for a draft or unchanged PR. `reviewed` advances only
-after GitHub accepts the comment-only review or when an already-published exact
-marker is recovered. Oracle and GitHub failures never advance it.
+`observed` may advance for a draft or unchanged PR and records the latest CI
+failure digest so a failure can trigger again after an intervening successful
+observation. Its monotonic per-PR revision gives repeated transitions a stable,
+unique review fingerprint without weakening marker-based retry recovery.
+`reviewed` advances only after GitHub accepts the comment-only review or when
+an already-published exact marker is recovered. Oracle and GitHub failures
+never advance it.
 
 Writes use `mktemp` in the state file's directory, complete JSON validation,
 mode `0600`, and `mv` on the same filesystem. This prevents partial documents.
