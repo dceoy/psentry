@@ -353,8 +353,11 @@ load_oracle_extra_args() {
     case "$argument" in
       --engine | --engine=* | --mode | --mode=* | -e | -e?* | \
         --prompt | --prompt=* | -p | -p?* | --file | --file=* | -f | -f?* | \
-        --write-output | --write-output=* | --background | --dry-run | \
-        --dry-run=* | --render | --copy | --models | --models=* | \
+        --include | --include=* | --files | --files=* | --path | --path=* | \
+        --paths | --paths=* | --write-output | --write-output=* | \
+        --background | --background=* | --no-background | --no-background=* | \
+        --wait | --wait=* | --no-wait | --no-wait=* | --dry-run | --dry-run=* | \
+        --render | --copy | --models | --models=* | \
         --followup | --followup=* | --generate-image | --generate-image=* | \
         --edit-image | --edit-image=* | --output | --output=* | \
         --browser-max-concurrent-tabs | --browser-max-concurrent-tabs=* | \
@@ -619,8 +622,8 @@ discover_candidates() {
     --state open
     --archived=false
     --limit "$ORACLE_PR_SENTRY_PR_SEARCH_LIMIT"
-    --sort created
-    --order asc
+    --sort updated
+    --order desc
     --json "number,repository,url,isDraft"
   )
 
@@ -948,6 +951,7 @@ run_oracle_review() {
     --browser-timeout "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s"
     --browser-max-concurrent-tabs 1
     --no-background
+    --wait
     --write-output "$output_file"
   )
 

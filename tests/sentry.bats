@@ -277,6 +277,36 @@ setup() {
   [[ "$output" == *"status 124"* ]]
 }
 
+@test "Oracle stays attached to the bounded foreground invocation" {
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  grep -q -- '--no-background --wait' "$GH_SHIM_STATE_DIR/oracle.log"
+}
+
+@test "Oracle wait controls and file-input aliases cannot be overridden" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  for controlled_argument in \
+    --background=true --no-background \
+    --wait --wait=true --no-wait --no-wait=true \
+    --include --include=/tmp/secret \
+    --files --files=/tmp/secret \
+    --path --path=/tmp/secret \
+    --paths --paths=/tmp/secret; do
+    printf '%s\n' "$controlled_argument" >"$args_file"
+    chmod 600 "$args_file"
+
+    invoke_sentry --dry-run
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"cannot be overridden: $controlled_argument"* ]]
+  done
+}
+
 @test "empty Oracle output is never posted" {
   export ORACLE_EMPTY_OUTPUT=1
   invoke_sentry
@@ -350,6 +380,22 @@ setup() {
   grep -q -- '--state open' "$GH_SHIM_STATE_DIR/gh.log"
   grep -q -- '--archived=false' "$GH_SHIM_STATE_DIR/gh.log"
   grep -q -- 'draft:false' "$GH_SHIM_STATE_DIR/gh.log"
+}
+
+@test "bounded discovery selects the most recently updated pull requests" {
+  export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-many.json"
+  export GH_DRAFT_NUMBERS=
+  export ORACLE_PR_SENTRY_PR_SEARCH_LIMIT=2
+
+  invoke_sentry --dry-run
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"eligible octo/example#102"* ]]
+  [[ "$output" == *"eligible octo/example#103"* ]]
+  [[ "$output" != *"octo/example#101"* ]]
+  grep -q -- '--limit 2' "$GH_SHIM_STATE_DIR/gh.log"
+  grep -q -- '--sort updated' "$GH_SHIM_STATE_DIR/gh.log"
+  grep -q -- '--order desc' "$GH_SHIM_STATE_DIR/gh.log"
 }
 
 @test "dry-run leaves configured storage and state permissions unchanged" {

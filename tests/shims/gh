@@ -12,6 +12,7 @@ printf '\n' >>"$GH_SHIM_STATE_DIR/gh.log"
 emit_candidates() {
   local numbers=$1
   local draft=$2
+  local limit=$3
   local repository=${GH_REPOSITORY:-octo/example}
 
   if [[ -z "$numbers" ]]; then
@@ -22,7 +23,8 @@ emit_candidates() {
   printf '%s\n' "${numbers//,/$'\n'}" |
     jq -Rsc \
       --arg repository "$repository" \
-      --argjson draft "$draft" '
+      --argjson draft "$draft" \
+      --argjson limit "$limit" '
         split("\n")
         | map(select(length > 0) | tonumber)
         | map({
@@ -31,6 +33,7 @@ emit_candidates() {
             url: ("https://github.com/" + $repository + "/pull/" + (tostring)),
             isDraft: $draft
           })
+        | .[:$limit]
       '
 }
 
@@ -60,10 +63,27 @@ case "${1:-} ${2:-}" in
     printf 'sentry-bot\n'
     ;;
   "search prs")
-    if [[ "${3:-}" == "draft:false" ]]; then
-      emit_candidates "${GH_READY_NUMBERS:-1}" false
-    elif [[ "${3:-}" == "draft:true" ]]; then
-      emit_candidates "${GH_DRAFT_NUMBERS:-}" true
+    search_query=${3:-}
+    search_limit=30
+    shift 3
+    while (($#)); do
+      if [[ "$1" == "--limit" ]]; then
+        search_limit=${2:?missing search limit}
+        shift 2
+      else
+        shift
+      fi
+    done
+
+    if [[ "$search_query" == "draft:false" ]]; then
+      if [[ -n "${GH_READY_SEARCH_FIXTURE:-}" ]]; then
+        jq --argjson limit "$search_limit" '.[:$limit]' \
+          "$GH_READY_SEARCH_FIXTURE"
+      else
+        emit_candidates "${GH_READY_NUMBERS:-1}" false "$search_limit"
+      fi
+    elif [[ "$search_query" == "draft:true" ]]; then
+      emit_candidates "${GH_DRAFT_NUMBERS:-}" true "$search_limit"
     else
       printf 'unexpected search query\n' >&2
       exit 2

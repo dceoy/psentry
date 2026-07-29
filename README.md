@@ -124,7 +124,7 @@ The sourced file takes precedence over exported environment values; the
 | --- | --- | --- |
 | `ORACLE_PR_SENTRY_GITHUB_OWNER` | authenticated `gh` login | Repository owner or organization filter |
 | `ORACLE_PR_SENTRY_GITHUB_AUTHOR` | authenticated `gh` login | Pull request author filter |
-| `ORACLE_PR_SENTRY_PR_SEARCH_LIMIT` | `50` | Maximum ready and draft observations per search |
+| `ORACLE_PR_SENTRY_PR_SEARCH_LIMIT` | `50` | Maximum most-recently-updated ready and draft observations per search |
 | `ORACLE_PR_SENTRY_ORACLE_BIN` | `oracle` | Oracle executable name or absolute path |
 | `ORACLE_PR_SENTRY_ORACLE_MODEL` | `gpt-5.5-pro` | ChatGPT model requested from Oracle |
 | `ORACLE_PR_SENTRY_ORACLE_THINKING_TIME` | `extended` | Oracle browser thinking level |
@@ -152,9 +152,10 @@ lines:
 ```
 
 The sentry rejects extra arguments that could replace its engine, prompt,
-attachments, output path, background behavior, or dry-run controls. The
-browser engine, single-tab concurrency, bounded foreground execution, and
-write-output path remain fixed by the executable.
+attachments (including Oracle's file-input aliases), output path,
+background/wait behavior, or dry-run controls. The browser engine, single-tab
+concurrency, attached bounded foreground execution, and write-output path
+remain fixed by the executable.
 
 If `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` is raised above 30 minutes, also raise
 the service's `RuntimeMaxSec` and `TimeoutStartSec`, then reinstall the unit.

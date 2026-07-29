@@ -20,9 +20,11 @@ Errors for one pull request are logged and do not prevent remaining candidates
 from being processed. The pass still exits non-zero so systemd records a
 failure.
 
-The sentry performs two bounded searches: `draft:false` supplies eligible work,
-while `draft:true` supplies observations needed to recognize a later
-draft-to-ready transition. Drafts are never passed to Oracle.
+The sentry performs two bounded searches, ordered by most recent update so
+newly active pull requests cannot remain behind a fixed set of older results:
+`draft:false` supplies eligible work, while `draft:true` supplies observations
+needed to recognize a later draft-to-ready transition. Drafts are never passed
+to Oracle.
 
 ## Normalized snapshot schema
 
