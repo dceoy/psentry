@@ -5,6 +5,8 @@ setup_sentry_test() {
   TEST_STATE_DIR="$BATS_TEST_TMPDIR/state"
   TEST_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
   TEST_CACHE_DIR="$BATS_TEST_TMPDIR/cache"
+  SYSTEM_FLOCK="$(command -v flock)"
+  SYSTEM_MV="$(command -v mv)"
 
   mkdir -p -- \
     "$TEST_HOME" \
@@ -13,7 +15,7 @@ setup_sentry_test() {
     "$TEST_RUNTIME_DIR" \
     "$TEST_CACHE_DIR"
 
-  export TEST_ROOT TEST_HOME GH_SHIM_STATE_DIR
+  export TEST_ROOT TEST_HOME GH_SHIM_STATE_DIR SYSTEM_FLOCK SYSTEM_MV
   export HOME="$TEST_HOME"
   export PATH="$TEST_ROOT/tests/shims:$PATH"
   export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"

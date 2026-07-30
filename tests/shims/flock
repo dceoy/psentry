@@ -5,4 +5,4 @@ set -euo pipefail
 if [[ "${FLOCK_BUSY:-0}" == 1 ]]; then
   exit 1
 fi
-exec /usr/bin/flock "$@"
+exec "$SYSTEM_FLOCK" "$@"
