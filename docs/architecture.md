@@ -166,11 +166,13 @@ does not represent a draft or unchanged snapshot, the sentry posts a hidden
 baseline marker so that local state loss before either observation cannot erase
 the intervening success or draft transition. Event identity comes from the
 durable sequence shared by baseline and review markers, so state loss or
-retention pruning cannot reuse an older transition fingerprint. Recovering a
-baseline also records an optional `comparison` checkpoint with the matching
-input, head, CI, and external-activity digests. This preserves trigger
-comparisons after recovery without representing the baseline as an Oracle
-review; the checkpoint is removed after the next successful review.
+retention pruning cannot reuse an older transition fingerprint. Recovering or
+publishing a baseline also records an optional `comparison` checkpoint with
+the matching input, head, CI, and external-activity digests when no reviewed
+comparison state exists. This preserves trigger comparisons across recovery
+and between consecutive no-review transitions without representing the
+baseline as an Oracle review; the checkpoint is removed after the next
+successful review.
 `reviewed` advances only after GitHub accepts the comment-only review or when
 an already-published exact marker is recovered. Oracle and GitHub failures
 never advance it.

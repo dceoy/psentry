@@ -17,6 +17,7 @@ RUN_TMP=""
 RUN_TMP_OWNED=0
 STATE_JSON=""
 SENTRY_LOGIN=""
+BASELINE_MARKER=""
 ORACLE_EXTRA_ARGS=()
 
 log() {
@@ -1170,6 +1171,7 @@ publish_baseline() {
   local initial_event_sequence=$SNAPSHOT_EVENT_SEQUENCE
   local baseline_marker
 
+  BASELINE_MARKER=""
   if ! install -d -m 700 -- "$fresh_directory"; then
     log ERROR "failed to create fresh baseline-snapshot directory"
     return 1
@@ -1188,6 +1190,7 @@ publish_baseline() {
     return 1
   fi
   if latest_baseline_matches_snapshot; then
+    BASELINE_MARKER=$SNAPSHOT_LATEST_PUBLICATION_MARKER
     log INFO "matching GitHub baseline appeared for $repository#$number"
     return 0
   fi
@@ -1202,6 +1205,7 @@ publish_baseline() {
     log ERROR "failed to publish baseline marker for $repository#$number"
     return 1
   fi
+  BASELINE_MARKER=$baseline_marker
   log INFO "published baseline marker for $repository#$number"
 }
 
@@ -1381,6 +1385,7 @@ process_candidate() {
   local comparison_fingerprint comparison_head comparison_external
   local observed_ci observed_ci_json observed_draft
   local new_ci_failure_count latest_ci_failure_count reason publish_status
+  local baseline_marker=""
 
   repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") || return 1
   number=$(jq -r '.number // 0' <<<"$candidate") || return 1
@@ -1468,16 +1473,25 @@ process_candidate() {
   if [[ "$SNAPSHOT_DRAFT" == "true" ]]; then
     log INFO "ineligible $SNAPSHOT_KEY: draft observed"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-      if ! latest_publication_matches_snapshot &&
-        ! publish_baseline "$repository" "$number" "$work_directory"; then
-        return 1
+      if ! latest_publication_matches_snapshot; then
+        if ! publish_baseline "$repository" "$number" "$work_directory"; then
+          return 1
+        fi
+        baseline_marker=$BASELINE_MARKER
       fi
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" true \
-        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
-        ! persist_state; then
+        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now"; then
         return 1
       fi
+      if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] &&
+        ! state_mark_comparison \
+          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD" \
+          true "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
+          "$baseline_marker"; then
+        return 1
+      fi
+      persist_state || return 1
     fi
     return
   fi
@@ -1520,16 +1534,25 @@ process_candidate() {
   if [[ -z "$reason" ]]; then
     log INFO "unchanged $SNAPSHOT_KEY: no meaningful update"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-      if ! latest_publication_matches_snapshot &&
-        ! publish_baseline "$repository" "$number" "$work_directory"; then
-        return 1
+      if ! latest_publication_matches_snapshot; then
+        if ! publish_baseline "$repository" "$number" "$work_directory"; then
+          return 1
+        fi
+        baseline_marker=$BASELINE_MARKER
       fi
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false \
-        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
-        ! persist_state; then
+        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now"; then
         return 1
       fi
+      if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] &&
+        ! state_mark_comparison \
+          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD" \
+          false "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
+          "$baseline_marker"; then
+        return 1
+      fi
+      persist_state || return 1
     fi
     return
   fi
