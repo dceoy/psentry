@@ -930,6 +930,34 @@ setup() {
   ' "$ORACLE_PR_SENTRY_STATE_FILE"
 }
 
+@test "a state-write failure after an input change recovers without a duplicate review" {
+  changed_diff="$BATS_TEST_TMPDIR/changed-pr.diff"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  {
+    printf '%s\n' "$(<"$GH_DIFF_FIXTURE")"
+    printf '%s\n' '+base branch changed the effective diff'
+  } >"$changed_diff"
+  export GH_DIFF_FIXTURE="$changed_diff"
+
+  export FAIL_STATE_MV=1
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 2 ]
+
+  unset FAIL_STATE_MV
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  jq -e '
+    .prs["octo/example#1"].reviewed.publication_status == "recovered"
+  ' "$ORACLE_PR_SENTRY_STATE_FILE"
+}
+
 @test "a concurrent invocation exits cleanly before discovery" {
   export FLOCK_BUSY=1
   invoke_sentry

@@ -2078,18 +2078,16 @@ process_candidate() {
     return
   fi
 
-  if [[ "$reason" == "new-pr" ]]; then
-    if [[ "$SNAPSHOT_LATEST_EVENT_KIND" == "review" &&
-      "$SNAPSHOT_LATEST_PUBLICATION_INPUT" == "$SNAPSHOT_INPUT_FINGERPRINT" &&
-      "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" ]]; then
-      SNAPSHOT_FINGERPRINT=$SNAPSHOT_LATEST_PUBLICATION_FINGERPRINT
-      SNAPSHOT_MARKER=$SNAPSHOT_LATEST_PUBLICATION_MARKER
-      log INFO "latest GitHub marker matches $SNAPSHOT_KEY; recovering local state"
-      if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-        record_success recovered
-      fi
-      return
+  if [[ "$SNAPSHOT_LATEST_EVENT_KIND" == "review" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_INPUT" == "$SNAPSHOT_INPUT_FINGERPRINT" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" ]]; then
+    SNAPSHOT_FINGERPRINT=$SNAPSHOT_LATEST_PUBLICATION_FINGERPRINT
+    SNAPSHOT_MARKER=$SNAPSHOT_LATEST_PUBLICATION_MARKER
+    log INFO "latest GitHub marker matches $SNAPSHOT_KEY; recovering local state"
+    if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
+      record_success recovered
     fi
+    return
   fi
 
   if ! SNAPSHOT_FINGERPRINT=$(event_fingerprint \
