@@ -352,6 +352,9 @@ load_oracle_extra_args() {
     argument=${argument%$'\r'}
     [[ -n "$argument" && "$argument" != \#* ]] || continue
     case "$argument" in
+      --)
+        die "Oracle argument is controlled by the sentry and cannot be overridden: $argument"
+        ;;
       --engine | --engine=* | --mode | --mode=* | -e | -e?* | \
         --model | --model=* | -m | -m?* | --models | --models=* | \
         --prompt | --prompt=* | -p | -p?* | --file | --file=* | -f | -f?* | \
@@ -727,7 +730,7 @@ discover_candidates() {
     --limit "$ORACLE_PR_SENTRY_PR_SEARCH_LIMIT"
     --sort updated
     --order desc
-    --json "number,repository,url,isDraft"
+    --json "number,repository,url,isDraft,updatedAt"
   )
 
   if ! gh search prs "draft:false" "${common_args[@]}" >"$ready_file"; then
@@ -752,7 +755,8 @@ discover_candidates() {
     | sort_by([.repository.nameWithOwner, .number, ._search_eligible])
     | group_by([.repository.nameWithOwner, .number])
     | map(last)
-    | sort_by([.repository.nameWithOwner, .number])
+    | sort_by(.updatedAt)
+    | reverse
   ' "$ready_file" "$drafts_file" >"$candidates_file"; then
     log ERROR "failed to normalize GitHub discovery results"
     return 1

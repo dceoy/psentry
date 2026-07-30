@@ -742,6 +742,21 @@ setup() {
   done
 }
 
+@test "the end-of-options delimiter cannot neutralize sentry-owned arguments" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  printf -- '--\n' >"$args_file"
+  chmod 600 "$args_file"
+
+  invoke_sentry --dry-run
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cannot be overridden: --"* ]]
+}
+
 @test "Oracle context and routing controls cannot be overridden" {
   args_directory="$TEST_HOME/.config/oracle-pr-sentry"
   args_file="$args_directory/oracle-args"
@@ -886,6 +901,19 @@ setup() {
   grep -q -- '--limit 2' "$GH_SHIM_STATE_DIR/gh.log"
   grep -q -- '--sort updated' "$GH_SHIM_STATE_DIR/gh.log"
   grep -q -- '--order desc' "$GH_SHIM_STATE_DIR/gh.log"
+}
+
+@test "candidate processing order follows recency, not a fixed repository/number order" {
+  export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
+  export GH_READY_NUMBERS=
+  export GH_DRAFT_NUMBERS=
+
+  invoke_sentry --dry-run
+
+  [ "$status" -eq 0 ]
+  processing_order=$(grep -o 'eligible octo/example#[0-9]*' <<<"$output" |
+    grep -o '[0-9]*$' | tr '\n' ',')
+  [ "$processing_order" = "2,1," ]
 }
 
 @test "dry-run leaves configured storage and state permissions unchanged" {
