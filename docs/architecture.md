@@ -150,7 +150,7 @@ keys:
         "ci_digest": "...",
         "external_digest": "...",
         "successful_at": "2026-07-29T12:00:00Z",
-        "marker": "<!-- oracle-pr-sentry:v2 ... -->",
+        "marker": "<!-- oracle-pr-sentry:v4 ... -->",
         "publication_status": "published"
       }
     }
@@ -161,16 +161,16 @@ keys:
 `observed` may advance for a draft or unchanged PR and records both the latest
 normalized CI failure set and its digest. A review is triggered only when the
 set gains a failure, while an intervening successful observation allows the
-same failure to trigger again later. When an observation changes without
-requiring a review, the sentry posts a hidden baseline marker so that a later
-state loss cannot erase the intervening success or draft transition. Event
-identity comes from the durable sequence shared by baseline and review markers,
-so state loss or retention pruning cannot reuse an older transition
-fingerprint. Recovering a baseline also records an optional `comparison`
-checkpoint with the matching input, head, CI, and external-activity digests.
-This preserves trigger comparisons after recovery without representing the
-baseline as an Oracle review; the checkpoint is removed after the next
-successful review.
+same failure to trigger again later. Whenever the latest trusted GitHub event
+does not represent a draft or unchanged snapshot, the sentry posts a hidden
+baseline marker so that local state loss before either observation cannot erase
+the intervening success or draft transition. Event identity comes from the
+durable sequence shared by baseline and review markers, so state loss or
+retention pruning cannot reuse an older transition fingerprint. Recovering a
+baseline also records an optional `comparison` checkpoint with the matching
+input, head, CI, and external-activity digests. This preserves trigger
+comparisons after recovery without representing the baseline as an Oracle
+review; the checkpoint is removed after the next successful review.
 `reviewed` advances only after GitHub accepts the comment-only review or when
 an already-published exact marker is recovered. Oracle and GitHub failures
 never advance it.
@@ -189,11 +189,14 @@ changes without requiring a separate database or full closed-PR scan.
 Every review ends with:
 
 ```text
-<!-- oracle-pr-sentry:v2 identity=IDENTITY fingerprint=SHA256 input=INPUT_SHA256 head=HEAD_SHA event=SEQUENCE -->
+<!-- oracle-pr-sentry:v4 identity=IDENTITY kind=review fingerprint=SHA256 input=INPUT_SHA256 head=HEAD_SHA event=SEQUENCE failures=BASE64_JSON external=EXTERNAL_SHA256 -->
 ```
 
 Before Oracle, the latest trusted marker can reconcile missing local state when
-its input fingerprint and head match the current snapshot.
+its input fingerprint and head match the current snapshot. Version 4 review
+markers also retain the normalized CI failure identities and external-activity
+digest, allowing a success or shrinking failure set to remain non-triggering
+when local state disappeared before that transition was observed.
 Immediately before publication, the sentry collects a fresh snapshot and
 requires:
 

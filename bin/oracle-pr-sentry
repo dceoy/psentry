@@ -742,6 +742,50 @@ collect_snapshot() {
           (try (
             .body
             | capture(
+                "(?:^|\\n)<!-- oracle-pr-sentry:v4 identity=(?<identity>[A-Za-z0-9._-]+) kind=review fingerprint=(?<fingerprint>[0-9a-f]{64}) input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) failures=(?<encoded_ci_failures>[A-Za-z0-9+/]+={0,2}) external=(?<external_digest>[0-9a-f]{64}) -->\\n?$"
+              )
+            | .event_sequence |= tonumber
+            | .encoded_ci_failures as $encoded_ci_failures
+            | ($encoded_ci_failures | @base64d | fromjson) as $ci_failures
+            | select(
+                ($ci_failures | type) == "array"
+                and all(
+                  $ci_failures[];
+                  type == "object"
+                  and keys == ["name", "workflow"]
+                  and (.name | type == "string")
+                  and (.workflow | type == "string")
+                )
+              )
+            | ($ci_failures | map({workflow, name}) | unique_by([.workflow, .name])) as $normalized_ci_failures
+            | select($ci_failures == $normalized_ci_failures)
+            | del(.encoded_ci_failures)
+            | . + {
+                version: 4,
+                kind: "review",
+                draft: false,
+                ci_failures: $normalized_ci_failures,
+                ci_digest: "",
+                marker: (
+                  "<!-- oracle-pr-sentry:v4 identity=" + .identity
+                  + " kind=review fingerprint=" + .fingerprint
+                  + " input=" + .input_fingerprint
+                  + " head=" + .head_sha
+                  + " event=" + (.event_sequence | tostring)
+                  + " failures=" + $encoded_ci_failures
+                  + " external=" + .external_digest
+                  + " -->"
+                )
+              }
+          ) catch null) // null
+        ) as $v4
+        | if $v4 != null
+          then $v4
+          else
+        (
+          (try (
+            .body
+            | capture(
                 "(?:^|\\n)<!-- oracle-pr-sentry:v3 identity=(?<identity>[A-Za-z0-9._-]+) kind=baseline input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) draft=(?<draft>true|false) ci=(?<ci_digest>[0-9a-f]{64}) -->\\n?$"
               )
             | .event_sequence |= tonumber
@@ -814,7 +858,8 @@ collect_snapshot() {
                   ) catch null) // null
                 )
               end
-          end;
+          end
+        end;
       def trusted_marker:
         . as $activity
         | if $activity.author != $sentry_login
@@ -1012,6 +1057,9 @@ snapshot_facts() {
     map({workflow, name})
     | unique_by([.workflow, .name])
   ' <<<"$SNAPSHOT_CI_JSON") || return 1
+  SNAPSHOT_CI_IDENTITIES_B64=$(jq -rn \
+    --arg value "$SNAPSHOT_CI_IDENTITIES_JSON" \
+    '$value | @base64') || return 1
   SNAPSHOT_CI_DIGEST=$(digest_text "$SNAPSHOT_CI_IDENTITIES_JSON") || return 1
   SNAPSHOT_EXTERNAL_JSON=$(jq -cS '.external_activity' "$snapshot_file") || return 1
   SNAPSHOT_EXTERNAL_DIGEST=$(digest_text "$SNAPSHOT_EXTERNAL_JSON") || return 1
@@ -1051,6 +1099,10 @@ snapshot_facts() {
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .kind // ""
   ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_EVENT_VERSION=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .version // 0
+  ' "$snapshot_file") || return 1
   SNAPSHOT_LATEST_EVENT_DRAFT=$(jq -r '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .draft // false
@@ -1058,6 +1110,14 @@ snapshot_facts() {
   SNAPSHOT_LATEST_EVENT_CI_DIGEST=$(jq -r '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .ci_digest // ""
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_EVENT_CI_IDENTITIES_JSON=$(jq -cS '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .ci_failures // []
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_EVENT_EXTERNAL_DIGEST=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .external_digest // ""
   ' "$snapshot_file") || return 1
   SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
 }
@@ -1085,6 +1145,16 @@ latest_baseline_matches_snapshot() {
     "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" &&
     "$SNAPSHOT_LATEST_EVENT_DRAFT" == "$SNAPSHOT_DRAFT" &&
     "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" == "$SNAPSHOT_CI_DIGEST" ]]
+}
+
+latest_publication_matches_snapshot() {
+  if latest_baseline_matches_snapshot; then
+    return 0
+  fi
+  [[ "$SNAPSHOT_LATEST_EVENT_KIND" == "review" &&
+    "$SNAPSHOT_DRAFT" == "false" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_INPUT" == "$SNAPSHOT_INPUT_FINGERPRINT" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" ]]
 }
 
 publish_baseline() {
@@ -1309,8 +1379,8 @@ process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
   local comparison_fingerprint comparison_head comparison_external
-  local observed_head observed_ci observed_ci_json observed_draft
-  local new_ci_failure_count observation_changed=0 reason publish_status
+  local observed_ci observed_ci_json observed_draft
+  local new_ci_failure_count latest_ci_failure_count reason publish_status
 
   repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") || return 1
   number=$(jq -r '.number // 0' <<<"$candidate") || return 1
@@ -1352,7 +1422,6 @@ process_candidate() {
   comparison_external=$(jq -r \
     '.comparison.external_digest // .reviewed.external_digest // ""' \
     <<<"$old_entry") || return 1
-  observed_head=$(jq -r '.observed.head_sha // ""' <<<"$old_entry") || return 1
   observed_ci=$(jq -r '.observed.ci_digest // .reviewed.ci_digest // ""' <<<"$old_entry") || return 1
   observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<<"$old_entry") || return 1
   observed_draft=$(jq -r '.observed.draft // false' <<<"$old_entry") || return 1
@@ -1373,12 +1442,10 @@ process_candidate() {
     new_ci_failure_count=$SNAPSHOT_CI_FAILURE_COUNT
   fi
 
-  if jq -e '.observed | type == "object"' <<<"$old_entry" >/dev/null &&
-    [[ "$observed_head" != "$SNAPSHOT_HEAD" ||
-      "$observed_draft" != "$SNAPSHOT_DRAFT" ||
-      "$observed_ci" != "$SNAPSHOT_CI_DIGEST" ]]; then
-    observation_changed=1
-  fi
+  latest_ci_failure_count=$(jq -cn \
+    --argjson current "$SNAPSHOT_CI_IDENTITIES_JSON" \
+    --argjson latest "$SNAPSHOT_LATEST_EVENT_CI_IDENTITIES_JSON" \
+    '($current - $latest) | length') || return 1
 
   if [[ -z "$comparison_fingerprint" ]] && latest_baseline_matches_snapshot; then
     log INFO "latest GitHub baseline matches $SNAPSHOT_KEY; recovering comparison state"
@@ -1401,7 +1468,7 @@ process_candidate() {
   if [[ "$SNAPSHOT_DRAFT" == "true" ]]; then
     log INFO "ineligible $SNAPSHOT_KEY: draft observed"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-      if ((observation_changed)) &&
+      if ! latest_publication_matches_snapshot &&
         ! publish_baseline "$repository" "$number" "$work_directory"; then
         return 1
       fi
@@ -1428,6 +1495,14 @@ process_candidate() {
     "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" != "$SNAPSHOT_CI_DIGEST" ]] &&
     ((SNAPSHOT_CI_FAILURE_COUNT > 0)); then
     reason="ci-failure"
+  elif [[ -z "$comparison_fingerprint" &&
+    "$SNAPSHOT_LATEST_EVENT_KIND" == "review" &&
+    "$SNAPSHOT_LATEST_EVENT_VERSION" -ge 4 &&
+    "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_INPUT" != "$SNAPSHOT_INPUT_FINGERPRINT" &&
+    "$SNAPSHOT_LATEST_EVENT_EXTERNAL_DIGEST" == "$SNAPSHOT_EXTERNAL_DIGEST" ]] &&
+    ((latest_ci_failure_count == 0)); then
+    reason=""
   elif [[ -z "$comparison_fingerprint" ]]; then
     reason="new-pr"
   elif [[ "$comparison_head" != "$SNAPSHOT_HEAD" ]]; then
@@ -1445,7 +1520,7 @@ process_candidate() {
   if [[ -z "$reason" ]]; then
     log INFO "unchanged $SNAPSHOT_KEY: no meaningful update"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-      if ((observation_changed)) &&
+      if ! latest_publication_matches_snapshot &&
         ! publish_baseline "$repository" "$number" "$work_directory"; then
         return 1
       fi
@@ -1478,7 +1553,7 @@ process_candidate() {
     log ERROR "failed to calculate event fingerprint for $SNAPSHOT_KEY"
     return 1
   fi
-  SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v2 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT input=$SNAPSHOT_INPUT_FINGERPRINT head=$SNAPSHOT_HEAD event=$SNAPSHOT_EVENT_SEQUENCE -->"
+  SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v4 identity=$ORACLE_PR_SENTRY_IDENTITY kind=review fingerprint=$SNAPSHOT_FINGERPRINT input=$SNAPSHOT_INPUT_FINGERPRINT head=$SNAPSHOT_HEAD event=$SNAPSHOT_EVENT_SEQUENCE failures=$SNAPSHOT_CI_IDENTITIES_B64 external=$SNAPSHOT_EXTERNAL_DIGEST -->"
 
   if snapshot_has_publication "$SNAPSHOT_FILE" "$SNAPSHOT_FINGERPRINT" "$SNAPSHOT_HEAD"; then
     log INFO "matching GitHub marker found for $SNAPSHOT_KEY; recovering local state"

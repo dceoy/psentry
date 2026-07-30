@@ -189,6 +189,43 @@ setup() {
   [[ "$output" == *"ci-failure"* ]]
 }
 
+@test "CI recovery after state loss does not schedule a new review" {
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
+@test "partial CI recovery after state loss does not schedule a new review" {
+  two_failures="$BATS_TEST_TMPDIR/two-failures.json"
+  one_failure="$BATS_TEST_TMPDIR/one-failure.json"
+  make_ci_failure_fixture "$two_failures" lint test
+  make_ci_failure_fixture "$one_failure" test
+
+  export GH_FIXTURE="$two_failures"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  export GH_FIXTURE="$one_failure"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
 @test "a recovered CI baseline preserves partial-recovery comparison state" {
   three_failures="$BATS_TEST_TMPDIR/three-failures.json"
   two_failures="$BATS_TEST_TMPDIR/two-failures.json"
@@ -273,6 +310,31 @@ setup() {
   [ "$(review_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
 
+  export GH_READY_NUMBERS=1
+  export GH_DRAFT_NUMBERS=
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"draft-to-ready"* ]]
+}
+
+@test "a draft baseline survives state loss before and after draft observation" {
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  export GH_READY_NUMBERS=
+  export GH_DRAFT_NUMBERS=1
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
   export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
