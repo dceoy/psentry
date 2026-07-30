@@ -219,8 +219,9 @@ This may require administrator policy. Lingering keeps the user manager alive;
 it does not create a graphical display or refresh an expired ChatGPT login.
 Headful Chrome needs a reachable graphical session. Set `DISPLAY` and, where
 needed, `XAUTHORITY` in the environment file using absolute values from that
-session. Wayland environments may require their corresponding runtime
-variables.
+session. The user service keeps its private temporary directory while binding
+the host's `/tmp/.X11-unix` socket directory read-only for X11 and Xwayland.
+Wayland environments may require their corresponding runtime variables.
 
 Do not expose a Chrome DevTools endpoint on a public interface. If attaching to
 an already-running browser, bind remote debugging to loopback and protect the

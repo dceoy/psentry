@@ -10,5 +10,6 @@ RuntimeMaxSec=35min
 TimeoutStartSec=35min
 NoNewPrivileges=true
 PrivateTmp=true
+BindReadOnlyPaths=-/tmp/.X11-unix
 StandardOutput=journal
 StandardError=journal

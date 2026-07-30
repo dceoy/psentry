@@ -70,3 +70,12 @@ oracle_count() {
     printf '0\n'
   fi
 }
+
+baseline_count() {
+  local count_file="$GH_SHIM_STATE_DIR/baseline-count"
+  if [[ -f "$count_file" ]]; then
+    cat "$count_file"
+  else
+    printf '0\n'
+  fi
+}

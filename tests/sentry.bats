@@ -163,6 +163,61 @@ setup() {
   [[ "$output" == *"ci-failure"* ]]
 }
 
+@test "a CI baseline survives state loss before the same failure recurs" {
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"ci-failure"* ]]
+}
+
+@test "a draft baseline survives state loss before the PR becomes ready" {
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_READY_NUMBERS=
+  export GH_DRAFT_NUMBERS=1
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  export GH_READY_NUMBERS=1
+  export GH_DRAFT_NUMBERS=
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"draft-to-ready"* ]]
+}
+
 @test "CI review triggers only when the observed failure set gains a check" {
   two_failures="$BATS_TEST_TMPDIR/two-failures.json"
   one_failure="$BATS_TEST_TMPDIR/one-failure.json"
@@ -533,6 +588,13 @@ setup() {
     "$TEST_ROOT/systemd/oracle-pr-sentry.service"
 
   [ "$status" -eq 1 ]
+}
+
+@test "systemd keeps the X11 socket visible inside its private tmp" {
+  run grep -Fx "BindReadOnlyPaths=-/tmp/.X11-unix" \
+    "$TEST_ROOT/systemd/oracle-pr-sentry.service"
+
+  [ "$status" -eq 0 ]
 }
 
 @test "an unsafe config file is rejected before it is sourced" {

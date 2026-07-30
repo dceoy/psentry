@@ -161,9 +161,12 @@ keys:
 `observed` may advance for a draft or unchanged PR and records both the latest
 normalized CI failure set and its digest. A review is triggered only when the
 set gains a failure, while an intervening successful observation allows the
-same failure to trigger again later. Event identity comes from the durable
-sequence embedded in trusted GitHub publication markers, so state loss or
-retention pruning cannot reuse an older transition fingerprint.
+same failure to trigger again later. When an observation changes without
+requiring a review, the sentry posts a hidden baseline marker so that a later
+state loss cannot erase the intervening success or draft transition. Event
+identity comes from the durable sequence shared by baseline and review markers,
+so state loss or retention pruning cannot reuse an older transition
+fingerprint.
 `reviewed` advances only after GitHub accepts the comment-only review or when
 an already-published exact marker is recovered. Oracle and GitHub failures
 never advance it.

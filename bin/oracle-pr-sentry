@@ -684,47 +684,81 @@ collect_snapshot() {
         (. // "") | tostring;
       def parse_marker:
         (
-          try (
+          (try (
             .body
             | capture(
-                "(?:^|\\n)<!-- oracle-pr-sentry:v2 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) -->\\n?$"
+                "(?:^|\\n)<!-- oracle-pr-sentry:v3 identity=(?<identity>[A-Za-z0-9._-]+) kind=baseline input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) draft=(?<draft>true|false) ci=(?<ci_digest>[0-9a-f]{64}) -->\\n?$"
               )
             | .event_sequence |= tonumber
+            | .draft |= (. == "true")
             | . + {
-                version: 2,
+                version: 3,
+                kind: "baseline",
+                fingerprint: "",
                 marker: (
-                  "<!-- oracle-pr-sentry:v2 identity=" + .identity
-                  + " fingerprint=" + .fingerprint
-                  + " input=" + .input_fingerprint
+                  "<!-- oracle-pr-sentry:v3 identity=" + .identity
+                  + " kind=baseline input=" + .input_fingerprint
                   + " head=" + .head_sha
                   + " event=" + (.event_sequence | tostring)
+                  + " draft=" + (.draft | tostring)
+                  + " ci=" + .ci_digest
                   + " -->"
                 )
               }
-          ) catch null
-        ) as $v2
-        | if $v2 != null
-          then $v2
+          ) catch null) // null
+        ) as $v3
+        | if $v3 != null
+          then $v3
           else
             (
-              try (
+              (try (
                 .body
                 | capture(
-                    "(?:^|\\n)<!-- oracle-pr-sentry:v1 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) -->\\n?$"
+                    "(?:^|\\n)<!-- oracle-pr-sentry:v2 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) -->\\n?$"
                   )
+                | .event_sequence |= tonumber
                 | . + {
-                    version: 1,
-                    input_fingerprint: .fingerprint,
-                    event_sequence: 0,
+                    version: 2,
+                    kind: "review",
+                    draft: false,
+                    ci_digest: "",
                     marker: (
-                      "<!-- oracle-pr-sentry:v1 identity=" + .identity
+                      "<!-- oracle-pr-sentry:v2 identity=" + .identity
                       + " fingerprint=" + .fingerprint
+                      + " input=" + .input_fingerprint
                       + " head=" + .head_sha
+                      + " event=" + (.event_sequence | tostring)
                       + " -->"
                     )
                   }
-              ) catch null
-            )
+              ) catch null) // null
+            ) as $v2
+            | if $v2 != null
+              then $v2
+              else
+                (
+                  (try (
+                    .body
+                    | capture(
+                        "(?:^|\\n)<!-- oracle-pr-sentry:v1 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) -->\\n?$"
+                      )
+                    | . + {
+                        version: 1,
+                        kind: "review",
+                        input_fingerprint: .fingerprint,
+                        event_sequence: 0,
+                        draft: false,
+                        ci_digest: "",
+                        marker: (
+                          "<!-- oracle-pr-sentry:v1 identity=" + .identity
+                          + " fingerprint=" + .fingerprint
+                          + " head=" + .head_sha
+                          + " -->"
+                        )
+                      }
+                  ) catch null) // null
+                )
+              end
           end;
       def trusted_marker:
         . as $activity
@@ -942,10 +976,6 @@ snapshot_facts() {
   SNAPSHOT_EVENT_SEQUENCE=$(jq '
     (([.publications[].event_sequence] | max) // 0) + 1
   ' "$snapshot_file") || return 1
-  SNAPSHOT_LATEST_PUBLICATION_VERSION=$(jq -r '
-    ((.publications | max_by([.event_sequence, .created_at])) // {})
-    | .version // 0
-  ' "$snapshot_file") || return 1
   SNAPSHOT_LATEST_PUBLICATION_FINGERPRINT=$(jq -r '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .fingerprint // ""
@@ -962,6 +992,18 @@ snapshot_facts() {
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .marker // ""
   ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_EVENT_KIND=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .kind // ""
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_EVENT_DRAFT=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .draft // false
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_EVENT_CI_DIGEST=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .ci_digest // ""
+  ' "$snapshot_file") || return 1
   SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
 }
 
@@ -973,8 +1015,69 @@ snapshot_has_publication() {
   jq -e \
     --arg fingerprint "$fingerprint" \
     --arg head_sha "$head_sha" '
-      any(.publications[]; .fingerprint == $fingerprint and .head_sha == $head_sha)
+      any(
+        .publications[];
+        .kind == "review"
+        and .fingerprint == $fingerprint
+        and .head_sha == $head_sha
+      )
     ' "$snapshot_file" >/dev/null
+}
+
+latest_baseline_matches_snapshot() {
+  [[ "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_INPUT" == "$SNAPSHOT_INPUT_FINGERPRINT" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" &&
+    "$SNAPSHOT_LATEST_EVENT_DRAFT" == "$SNAPSHOT_DRAFT" &&
+    "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" == "$SNAPSHOT_CI_DIGEST" ]]
+}
+
+publish_baseline() {
+  local repository=$1
+  local number=$2
+  local work_directory=$3
+  local fresh_directory="$work_directory/baseline-fresh"
+  local marker_file="$work_directory/baseline-marker.md"
+  local initial_head=$SNAPSHOT_HEAD
+  local initial_draft=$SNAPSHOT_DRAFT
+  local initial_input_fingerprint=$SNAPSHOT_INPUT_FINGERPRINT
+  local initial_ci_digest=$SNAPSHOT_CI_DIGEST
+  local initial_event_sequence=$SNAPSHOT_EVENT_SEQUENCE
+  local baseline_marker
+
+  if ! install -d -m 700 -- "$fresh_directory"; then
+    log ERROR "failed to create fresh baseline-snapshot directory"
+    return 1
+  fi
+  if ! collect_snapshot "$repository" "$number" "$fresh_directory" ||
+    ! snapshot_facts "$SNAPSHOT_FILE"; then
+    return 1
+  fi
+
+  if [[ "$SNAPSHOT_STATE" != "OPEN" ||
+    "$SNAPSHOT_HEAD" != "$initial_head" ||
+    "$SNAPSHOT_DRAFT" != "$initial_draft" ||
+    "$SNAPSHOT_INPUT_FINGERPRINT" != "$initial_input_fingerprint" ||
+    "$SNAPSHOT_CI_DIGEST" != "$initial_ci_digest" ]]; then
+    log INFO "discarding stale baseline for $repository#$number; PR inputs changed"
+    return 1
+  fi
+  if latest_baseline_matches_snapshot; then
+    log INFO "matching GitHub baseline appeared for $repository#$number"
+    return 0
+  fi
+  if [[ "$SNAPSHOT_EVENT_SEQUENCE" != "$initial_event_sequence" ]]; then
+    log INFO "discarding stale baseline for $repository#$number; event sequence changed"
+    return 1
+  fi
+
+  baseline_marker="<!-- $PROGRAM_NAME:v3 identity=$ORACLE_PR_SENTRY_IDENTITY kind=baseline input=$initial_input_fingerprint head=$initial_head event=$initial_event_sequence draft=$initial_draft ci=$initial_ci_digest -->"
+  if ! printf '%s\n' "$baseline_marker" >"$marker_file" ||
+    ! gh pr comment "$number" --repo "$repository" --body-file "$marker_file"; then
+    log ERROR "failed to publish baseline marker for $repository#$number"
+    return 1
+  fi
+  log INFO "published baseline marker for $repository#$number"
 }
 
 record_success() {
@@ -1151,8 +1254,8 @@ process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
   local reviewed_fingerprint reviewed_head reviewed_external
-  local observed_ci observed_ci_json observed_draft
-  local new_ci_failure_count reason publish_status
+  local observed_head observed_ci observed_ci_json observed_draft
+  local new_ci_failure_count observation_changed=0 reason publish_status
 
   repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") || return 1
   number=$(jq -r '.number // 0' <<<"$candidate") || return 1
@@ -1188,6 +1291,7 @@ process_candidate() {
   reviewed_fingerprint=$(jq -r '.reviewed.fingerprint // ""' <<<"$old_entry") || return 1
   reviewed_head=$(jq -r '.reviewed.head_sha // ""' <<<"$old_entry") || return 1
   reviewed_external=$(jq -r '.reviewed.external_digest // ""' <<<"$old_entry") || return 1
+  observed_head=$(jq -r '.observed.head_sha // ""' <<<"$old_entry") || return 1
   observed_ci=$(jq -r '.observed.ci_digest // .reviewed.ci_digest // ""' <<<"$old_entry") || return 1
   observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<<"$old_entry") || return 1
   observed_draft=$(jq -r '.observed.draft // false' <<<"$old_entry") || return 1
@@ -1208,9 +1312,33 @@ process_candidate() {
     new_ci_failure_count=$SNAPSHOT_CI_FAILURE_COUNT
   fi
 
+  if jq -e '.observed | type == "object"' <<<"$old_entry" >/dev/null &&
+    [[ "$observed_head" != "$SNAPSHOT_HEAD" ||
+      "$observed_draft" != "$SNAPSHOT_DRAFT" ||
+      "$observed_ci" != "$SNAPSHOT_CI_DIGEST" ]]; then
+    observation_changed=1
+  fi
+
+  if [[ -z "$reviewed_fingerprint" ]] && latest_baseline_matches_snapshot; then
+    log INFO "latest GitHub baseline matches $SNAPSHOT_KEY; recovering observed state"
+    if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
+      if ! state_observe \
+        "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" "$SNAPSHOT_DRAFT" \
+        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
+        ! persist_state; then
+        return 1
+      fi
+    fi
+    return
+  fi
+
   if [[ "$SNAPSHOT_DRAFT" == "true" ]]; then
     log INFO "ineligible $SNAPSHOT_KEY: draft observed"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
+      if ((observation_changed)) &&
+        ! publish_baseline "$repository" "$number" "$work_directory"; then
+        return 1
+      fi
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" true \
         "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
@@ -1223,8 +1351,17 @@ process_candidate() {
 
   log INFO "eligible $SNAPSHOT_KEY at $SNAPSHOT_HEAD"
 
-  if [[ "$observed_draft" == "true" ]]; then
+  if [[ "$observed_draft" == "true" ||
+    (-z "$reviewed_fingerprint" &&
+    "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
+    "$SNAPSHOT_LATEST_EVENT_DRAFT" == "true") ]]; then
     reason="draft-to-ready"
+  elif [[ -z "$reviewed_fingerprint" &&
+    "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
+    "$SNAPSHOT_LATEST_EVENT_DRAFT" == "false" &&
+    "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" != "$SNAPSHOT_CI_DIGEST" ]] &&
+    ((SNAPSHOT_CI_FAILURE_COUNT > 0)); then
+    reason="ci-failure"
   elif [[ -z "$reviewed_fingerprint" ]]; then
     reason="new-pr"
   elif [[ "$reviewed_head" != "$SNAPSHOT_HEAD" ]]; then
@@ -1242,6 +1379,10 @@ process_candidate() {
   if [[ -z "$reason" ]]; then
     log INFO "unchanged $SNAPSHOT_KEY: no meaningful update"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
+      if ((observation_changed)) &&
+        ! publish_baseline "$repository" "$number" "$work_directory"; then
+        return 1
+      fi
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" false \
         "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
@@ -1253,20 +1394,12 @@ process_candidate() {
   fi
 
   if [[ "$reason" == "new-pr" ]]; then
-    if [[ "$SNAPSHOT_LATEST_PUBLICATION_VERSION" == 2 &&
+    if [[ "$SNAPSHOT_LATEST_EVENT_KIND" == "review" &&
       "$SNAPSHOT_LATEST_PUBLICATION_INPUT" == "$SNAPSHOT_INPUT_FINGERPRINT" &&
       "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" ]]; then
       SNAPSHOT_FINGERPRINT=$SNAPSHOT_LATEST_PUBLICATION_FINGERPRINT
       SNAPSHOT_MARKER=$SNAPSHOT_LATEST_PUBLICATION_MARKER
       log INFO "latest GitHub marker matches $SNAPSHOT_KEY; recovering local state"
-      if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-        record_success recovered
-      fi
-      return
-    elif [[ "$SNAPSHOT_LATEST_PUBLICATION_VERSION" != 2 ]] &&
-      snapshot_has_publication \
-        "$SNAPSHOT_FILE" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD"; then
-      log INFO "matching legacy GitHub marker found for $SNAPSHOT_KEY; recovering local state"
       if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
         record_success recovered
       fi

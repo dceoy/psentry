@@ -40,8 +40,9 @@ emit_candidates() {
 append_posted_review() {
   local fixture=$1
   local number=$2
-  local posted_file
+  local posted_file posted_comment_file
   local posted_bodies='[]'
+  local posted_comments='[]'
 
   if [[ "${GH_INCLUDE_POSTED_MARKER:-1}" == 1 ]]; then
     for posted_file in "$GH_SHIM_STATE_DIR"/posted-"$number"-*.md; do
@@ -49,10 +50,16 @@ append_posted_review() {
       posted_bodies=$(jq -c --rawfile body "$posted_file" '. + [$body]' \
         <<<"$posted_bodies")
     done
+    for posted_comment_file in "$GH_SHIM_STATE_DIR"/baseline-"$number"-*.md; do
+      [[ -s "$posted_comment_file" ]] || continue
+      posted_comments=$(jq -c --rawfile body "$posted_comment_file" '. + [$body]' \
+        <<<"$posted_comments")
+    done
   fi
 
-  if [[ "$posted_bodies" != '[]' ]]; then
-    jq --argjson bodies "$posted_bodies" '
+  jq \
+    --argjson bodies "$posted_bodies" \
+    --argjson baseline_bodies "$posted_comments" '
       .reviews += [
         $bodies
         | to_entries[]
@@ -67,10 +74,22 @@ append_posted_review() {
             commit: {oid: .headRefOid}
           }
       ]
+      | .comments += [
+          $baseline_bodies
+          | to_entries[]
+          | {
+              id: ("PRC_baseline_" + (.key | tostring)),
+              author: {login: "sentry-bot"},
+              createdAt: (
+                "2026-07-29T12:30:0" + (.key | tostring) + "Z"
+              ),
+              updatedAt: (
+                "2026-07-29T12:30:0" + (.key | tostring) + "Z"
+              ),
+              body: .value
+            }
+        ]
     ' "$fixture"
-  else
-    jq . "$fixture"
-  fi
 }
 
 case "${1:-} ${2:-}" in
@@ -173,6 +192,31 @@ case "${1:-} ${2:-}" in
     ((count += 1))
     printf '%s\n' "$count" >"$count_file"
     printf -v history_file '%s/posted-%s-%06d.md' \
+      "$GH_SHIM_STATE_DIR" "$number" "$count"
+    cp -- "$body_file" "$history_file"
+    ;;
+  "pr comment")
+    number=${3:?missing PR number}
+    shift 3
+    body_file=""
+    while (($#)); do
+      if [[ "$1" == "--body-file" ]]; then
+        body_file=$2
+        shift 2
+      else
+        shift
+      fi
+    done
+    [[ -n "$body_file" ]] || {
+      printf 'missing --body-file\n' >&2
+      exit 2
+    }
+    count_file="$GH_SHIM_STATE_DIR/baseline-count"
+    count=0
+    [[ -f "$count_file" ]] && count=$(<"$count_file")
+    ((count += 1))
+    printf '%s\n' "$count" >"$count_file"
+    printf -v history_file '%s/baseline-%s-%06d.md' \
       "$GH_SHIM_STATE_DIR" "$number" "$count"
     cp -- "$body_file" "$history_file"
     ;;
