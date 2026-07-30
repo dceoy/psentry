@@ -27,12 +27,6 @@ readonly HOME_VOLUME="${HOME_VOLUME:-oracle-pr-sentry-home}"
 readonly CONTAINER_WORKSPACE='/workspace'
 readonly WORKSPACE_DIR="${WORKSPACE_DIR:-$(pwd)}"
 readonly MIN_MACOS_MAJOR="${MIN_MACOS_MAJOR:-26}"
-NOVNC_HOST="${HOST_IP}"
-if [[ "${HOST_IP}" == '0.0.0.0' ]]; then
-  NOVNC_HOST='localhost'
-fi
-readonly NOVNC_HOST
-readonly NOVNC_URL="http://${NOVNC_HOST}:${PORT}/vnc.html"
 readonly SENTRY_ORACLE_HOME="${CONTAINER_HOME}/.local/share/oracle-pr-sentry/oracle-home"
 
 container_running() {
@@ -120,6 +114,38 @@ require_running() {
   }
 }
 
+container_novnc_url() {
+  local container_port host port publication
+
+  if ! publication="$(
+    container inspect "${NAME}" 2> /dev/null \
+      | plutil -extract '0.configuration.publishedPorts.0' json -o - -
+  )"; then
+    printf "ERROR: could not inspect the noVNC publication for container '%s'.\n" \
+      "${NAME}" >&2
+    return 1
+  fi
+  if ! host="$(plutil -extract hostAddress raw -o - - <<< "${publication}")" \
+    || ! port="$(plutil -extract hostPort raw -o - - <<< "${publication}")" \
+    || ! container_port="$(
+      plutil -extract containerPort raw -o - - <<< "${publication}"
+    )"; then
+    printf "ERROR: container '%s' has an unreadable port publication.\n" "${NAME}" >&2
+    return 1
+  fi
+  if [[ "${container_port}" != 6080 ]]; then
+    printf "ERROR: container '%s' does not publish the expected noVNC port.\n" \
+      "${NAME}" >&2
+    return 1
+  fi
+
+  case "${host}" in
+    0.0.0.0 | '::') host='localhost' ;;
+    *:*) host="[${host}]" ;;
+  esac
+  printf 'http://%s:%s/vnc.html\n' "${host}" "${port}"
+}
+
 build() {
   validate_containerfile
   check
@@ -135,14 +161,16 @@ pull() {
 }
 
 up() {
+  local novnc_url
   local -a container_args
 
   check
   validate_workspace_dir
   start_container_system
   if container_running; then
+    novnc_url="$(container_novnc_url)"
     printf "Container '%s' is already running.\n" "${NAME}"
-    printf 'noVNC:  %s\n' "${NOVNC_URL}"
+    printf 'noVNC:  %s\n' "${novnc_url}"
     return
   fi
   if ! image_exists; then
@@ -174,11 +202,12 @@ up() {
     --volume "${WORKSPACE_DIR}:${CONTAINER_WORKSPACE}"
   )
   container run "${container_args[@]}" "${IMAGE}" > /dev/null
+  novnc_url="$(container_novnc_url)"
   printf "Container '%s' started.\n" "${NAME}"
   if ((VNC_PASSWORD_GENERATED)); then
     printf 'VNC password (randomly generated): %s\n' "${VNC_PASSWORD}"
   fi
-  printf 'noVNC:  %s\n' "${NOVNC_URL}"
+  printf 'noVNC:  %s\n' "${novnc_url}"
 }
 
 down() {
@@ -193,11 +222,14 @@ down() {
 }
 
 status() {
+  local novnc_url
+
   check
   start_container_system
   printf 'Container: %s\n' "${NAME}"
   if container_running; then
-    printf 'Status:    running\nnoVNC:     %s\n' "${NOVNC_URL}"
+    novnc_url="$(container_novnc_url)"
+    printf 'Status:    running\nnoVNC:     %s\n' "${novnc_url}"
   elif container_exists; then
     printf 'Status:    stopped (stale container present)\n'
     return 1
@@ -224,10 +256,13 @@ gh_login() {
 }
 
 oracle_login() {
+  local novnc_url
+
   check
   start_container_system
   require_running
-  printf 'Complete the ChatGPT login in noVNC: %s\n' "${NOVNC_URL}"
+  novnc_url="$(container_novnc_url)"
+  printf 'Complete the ChatGPT login in noVNC: %s\n' "${novnc_url}"
   exec container exec --interactive --tty \
     "${NAME}" /usr/local/bin/oracle-pr-sentry-entrypoint \
     env -u ORACLE_BROWSER_PROFILE_DIR \

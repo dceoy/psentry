@@ -107,9 +107,11 @@ Useful targets:
 
 The defaults can be overridden with Make variables such as `PORT`, `CPUS`,
 `MEMORY`, `VNC_GEOMETRY`, `VNC_PASSWORD`, `HOME_VOLUME`, and `WORKSPACE_DIR`.
-noVNC binds to `127.0.0.1` by default. A non-loopback bind requires an explicit
-`VNC_PASSWORD`; do not expose the unencrypted noVNC connection on an untrusted
-network.
+The host-side noVNC publication binds to `127.0.0.1` by default. Websockify
+still listens on the container network, where peer Apple containers can reach
+it by container IP, so run the desktop only alongside trusted containers. A
+non-loopback host publication requires an explicit `VNC_PASSWORD`; do not
+expose the unencrypted noVNC connection on an untrusted network.
 
 The named home volume contains the `gh` credential, ChatGPT browser session,
 Oracle data, sentry configuration, and sentry state. Treat it as sensitive.

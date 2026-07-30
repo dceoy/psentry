@@ -1291,3 +1291,21 @@ setup() {
   run grep -F -- '-localhost no' "$TEST_ROOT/container/entrypoint.sh"
   [ "$status" -ne 0 ]
 }
+
+@test "container URL reporting inspects the running port publication" {
+  run grep -F "container inspect \"\${NAME}\"" "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F "0.configuration.publishedPorts.0" "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'NOVNC_URL' "$TEST_ROOT/container.sh"
+  [ "$status" -ne 0 ]
+}
+
+@test "container documentation describes the peer-container trust boundary" {
+  run grep -F \
+    'so run the desktop only alongside trusted containers.' \
+    "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+}
