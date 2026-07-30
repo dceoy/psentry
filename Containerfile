@@ -33,6 +33,7 @@ ENV \
   DISPLAY=':1' \
   NOVNC_PORT="${NOVNC_PORT}" \
   ORACLE_ENGINE='browser' \
+  ORACLE_PR_SENTRY_PROMPT_PATH='/usr/local/share/oracle-pr-sentry/review-prompt.md' \
   VNC_DEPTH="${VNC_DEPTH}" \
   VNC_GEOMETRY="${VNC_GEOMETRY}"
 
@@ -81,8 +82,6 @@ RUN \
 COPY --chmod=0755 bin/oracle-pr-sentry /usr/local/bin/oracle-pr-sentry
 COPY --chmod=0755 container/entrypoint.sh /usr/local/bin/oracle-pr-sentry-entrypoint
 COPY --chmod=0600 config/env.example /opt/home-skel/.config/oracle-pr-sentry/env
-COPY --chmod=0644 share/oracle-pr-sentry/review-prompt.md \
-  /opt/home-skel/.local/share/oracle-pr-sentry/review-prompt.md
 COPY --chmod=0644 share/oracle-pr-sentry/review-prompt.md \
   /usr/local/share/oracle-pr-sentry/review-prompt.md
 

@@ -1271,3 +1271,23 @@ setup() {
   [ ! -e "$side_effect" ]
   [[ "$output" == *"trusted file must not be group- or world-writable"* ]]
 }
+
+@test "the container always uses the image-owned review prompt" {
+  run grep -F \
+    "ORACLE_PR_SENTRY_PROMPT_PATH='/usr/local/share/oracle-pr-sentry/review-prompt.md'" \
+    "$TEST_ROOT/Containerfile"
+  [ "$status" -eq 0 ]
+
+  run grep -F \
+    '/opt/home-skel/.local/share/oracle-pr-sentry/review-prompt.md' \
+    "$TEST_ROOT/Containerfile"
+  [ "$status" -ne 0 ]
+}
+
+@test "TigerVNC listens only on the container loopback interface" {
+  run grep -F -- '-localhost yes' "$TEST_ROOT/container/entrypoint.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F -- '-localhost no' "$TEST_ROOT/container/entrypoint.sh"
+  [ "$status" -ne 0 ]
+}

@@ -59,7 +59,7 @@ chmod +x "${VNC_CONFIG_DIR}/xstartup"
 vncserver "${DISPLAY}" \
   -geometry "${VNC_GEOMETRY}" \
   -depth "${VNC_DEPTH}" \
-  -localhost no
+  -localhost yes
 
 exec websockify \
   --web=/usr/share/novnc \
