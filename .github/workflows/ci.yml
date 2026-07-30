@@ -28,6 +28,7 @@ jobs:
           pipx install zizmor
           pipx install yamllint
           pipx install checkov
+          mkdir -p "$HOME/.local/bin"
           bash <(curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) latest "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
