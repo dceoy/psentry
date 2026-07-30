@@ -35,6 +35,7 @@ setup_sentry_test() {
     FLOCK_BUSY \
     GH_DRAFT_FIXTURE \
     GH_FAIL_PR \
+    GH_RACE_DIFF \
     GH_FIXTURE_1 \
     GH_FIXTURE_2 \
     GH_INCLUDE_POSTED_MARKER \

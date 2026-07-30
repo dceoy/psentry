@@ -46,6 +46,7 @@ are projected to stable fields and sorted deterministically.
   "draft": false,
   "base": {"ref": "main"},
   "head": {"ref": "feature", "sha": "40-character-sha"},
+  "diff": {"sha256": "sha256-of-the-exact-unified-diff"},
   "checks": [
     {
       "name": "test",
@@ -94,25 +95,32 @@ Relevant CI failures are the normalized conclusions:
 
 Pending, neutral, skipped, and successful checks do not enter the CI digest.
 The external activity array and relevant-failure array are independently
-canonicalized with `jq -cS` and hashed with SHA-256.
+canonicalized with `jq -cS` and hashed with SHA-256. The exact unified diff
+collected with the snapshot is also hashed; that same file is passed to Oracle.
 
-The final fingerprint is the SHA-256 of canonical JSON containing:
+The context fingerprint is the SHA-256 of canonical JSON containing:
 
 ```json
 {
   "schema_version": 1,
+  "base_ref": "main",
   "head_sha": "...",
-  "ready": true,
-  "ci_digest": "...",
+  "diff_digest": "...",
   "external_digest": "..."
 }
 ```
 
+The final input fingerprint hashes that context fingerprint together with the
+CI digest and ready state. Consequently a base retarget or a base-branch update
+that changes the effective PR diff schedules a new review even when the head
+SHA is unchanged.
+
 A differing fingerprint is reviewed only when it represents first observation,
-draft readiness, a new head, a newly added relevant current-head CI failure, or
-changed external activity. Comparing the normalized current and previously
-observed failure sets prevents either a transition back to success or a
-shrinking failure set from scheduling a review by itself.
+draft readiness, a new head, a changed base/diff context, a newly added
+relevant current-head CI failure, or changed external activity. Comparing the
+normalized current and previously observed failure sets prevents either a
+transition back to success or a shrinking failure set from scheduling a review
+by itself.
 
 Every scheduled review receives an event fingerprint that hashes its input
 fingerprint, trigger reason, and the next event sequence recovered from trusted
@@ -121,9 +129,9 @@ transitions, including a head returning to an older commit, without depending
 on resettable local state.
 
 The pull request title, body, files, checks, and discussion remain in the
-metadata supplied to Oracle. Code changes are represented by the head SHA;
-labels, assignees, milestones, and generic GitHub `updatedAt` are intentionally
-absent from the trigger projection.
+metadata supplied to Oracle. Code changes are represented by the head SHA,
+base ref, and exact diff digest; labels, assignees, milestones, and generic
+GitHub `updatedAt` are intentionally absent from the trigger projection.
 
 ## State schema
 
@@ -145,6 +153,8 @@ keys:
       },
       "reviewed": {
         "fingerprint": "...",
+        "input_fingerprint": "...",
+        "context_fingerprint": "...",
         "head_sha": "...",
         "draft": false,
         "ci_digest": "...",
@@ -168,11 +178,13 @@ the intervening success or draft transition. Event identity comes from the
 durable sequence shared by baseline and review markers, so state loss or
 retention pruning cannot reuse an older transition fingerprint. Recovering or
 publishing a baseline also records an optional `comparison` checkpoint with
-the matching input, head, CI, and external-activity digests when no reviewed
-comparison state exists. This preserves trigger comparisons across recovery
-and between consecutive no-review transitions without representing the
-baseline as an Oracle review; the checkpoint is removed after the next
-successful review.
+the matching input, context, head, CI, and external-activity digests when no
+reviewed comparison state exists. Version 5 baseline markers also retain the
+normalized CI failure identities, so consecutive state losses cannot turn a
+shrinking failure set into a new failure event. This preserves trigger
+comparisons across recovery and between consecutive no-review transitions
+without representing the baseline as an Oracle review; the checkpoint is
+removed after the next successful review.
 `reviewed` advances only after GitHub accepts the comment-only review or when
 an already-published exact marker is recovered. Oracle and GitHub failures
 never advance it.
@@ -191,21 +203,23 @@ changes without requiring a separate database or full closed-PR scan.
 Every review ends with:
 
 ```text
-<!-- oracle-pr-sentry:v4 identity=IDENTITY kind=review fingerprint=SHA256 input=INPUT_SHA256 head=HEAD_SHA event=SEQUENCE failures=BASE64_JSON external=EXTERNAL_SHA256 -->
+<!-- oracle-pr-sentry:v5 identity=IDENTITY kind=review fingerprint=SHA256 input=INPUT_SHA256 context=CONTEXT_SHA256 head=HEAD_SHA event=SEQUENCE failures=BASE64_JSON external=EXTERNAL_SHA256 -->
 ```
 
 Before Oracle, the latest trusted marker can reconcile missing local state when
-its input fingerprint and head match the current snapshot. Version 4 review
-markers also retain the normalized CI failure identities and external-activity
-digest, allowing a success or shrinking failure set to remain non-triggering
-when local state disappeared before that transition was observed.
+its input fingerprint and head match the current snapshot. Version 5 review and
+baseline markers retain the context fingerprint and normalized CI failure
+identities, allowing a success or shrinking failure set to remain
+non-triggering after state loss without masking a changed base, diff, or
+discussion.
 Immediately before publication, the sentry collects a fresh snapshot and
 requires:
 
 - state is still open;
 - the PR is still ready;
 - head SHA is unchanged;
-- the input fingerprint and next event sequence are unchanged;
+- the input fingerprint (including the exact diff digest) and next event
+  sequence are unchanged;
 - no exact trusted marker already exists.
 
 A stale Oracle result is discarded. Publication always uses

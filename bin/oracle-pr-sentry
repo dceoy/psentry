@@ -470,6 +470,14 @@ load_state() {
           .reviewed
           | type == "object"
           and (.fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
+          and (
+            (has("input_fingerprint") | not)
+            or (.input_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
+          )
+          and (
+            (has("context_fingerprint") | not)
+            or (.context_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
+          )
           and (.head_sha | type == "string" and test("^[0-9A-Fa-f]{7,64}$"))
           and (.draft == false)
           and (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
@@ -488,6 +496,10 @@ load_state() {
           .comparison
           | type == "object"
           and (.fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
+          and (
+            (has("context_fingerprint") | not)
+            or (.context_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
+          )
           and (.head_sha | type == "string" and test("^[0-9A-Fa-f]{7,64}$"))
           and (.draft | type == "boolean")
           and (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
@@ -566,18 +578,22 @@ state_observe() {
 state_mark_reviewed() {
   local key=$1
   local fingerprint=$2
-  local head_sha=$3
-  local ci_digest=$4
-  local external_digest=$5
-  local timestamp=$6
-  local marker=$7
-  local publication_status=$8
+  local input_fingerprint=$3
+  local context_fingerprint=$4
+  local head_sha=$5
+  local ci_digest=$6
+  local external_digest=$7
+  local timestamp=$8
+  local marker=$9
+  local publication_status=${10}
 
   local updated_state
 
   if ! updated_state=$(jq -cS \
     --arg key "$key" \
     --arg fingerprint "$fingerprint" \
+    --arg input_fingerprint "$input_fingerprint" \
+    --arg context_fingerprint "$context_fingerprint" \
     --arg head_sha "$head_sha" \
     --arg ci_digest "$ci_digest" \
     --arg external_digest "$external_digest" \
@@ -586,6 +602,8 @@ state_mark_reviewed() {
     --arg publication_status "$publication_status" '
       .prs[$key].reviewed = {
         fingerprint: $fingerprint,
+        input_fingerprint: $input_fingerprint,
+        context_fingerprint: $context_fingerprint,
         head_sha: $head_sha,
         draft: false,
         ci_digest: $ci_digest,
@@ -605,18 +623,20 @@ state_mark_reviewed() {
 state_mark_comparison() {
   local key=$1
   local fingerprint=$2
-  local head_sha=$3
-  local draft=$4
-  local ci_digest=$5
-  local external_digest=$6
-  local timestamp=$7
-  local marker=$8
+  local context_fingerprint=$3
+  local head_sha=$4
+  local draft=$5
+  local ci_digest=$6
+  local external_digest=$7
+  local timestamp=$8
+  local marker=$9
 
   local updated_state
 
   if ! updated_state=$(jq -cS \
     --arg key "$key" \
     --arg fingerprint "$fingerprint" \
+    --arg context_fingerprint "$context_fingerprint" \
     --arg head_sha "$head_sha" \
     --argjson draft "$draft" \
     --arg ci_digest "$ci_digest" \
@@ -625,6 +645,7 @@ state_mark_comparison() {
     --arg marker "$marker" '
       .prs[$key].comparison = {
         fingerprint: $fingerprint,
+        context_fingerprint: $context_fingerprint,
         head_sha: $head_sha,
         draft: $draft,
         ci_digest: $ci_digest,
@@ -714,8 +735,10 @@ collect_snapshot() {
   local work_directory=$3
   local raw_pr="$work_directory/pr.json"
   local review_pages="$work_directory/review-comments.json"
+  local diff_file="$work_directory/pr.diff"
   local snapshot_file="$work_directory/snapshot.json"
   local marker_prefix="<!-- $PROGRAM_NAME:v"
+  local diff_digest
 
   if ! gh pr view "$number" --repo "$repository" --json \
     number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,statusCheckRollup,reviews,comments,files \
@@ -730,15 +753,116 @@ collect_snapshot() {
     return 1
   fi
 
+  if ! gh pr diff "$number" --repo "$repository" >"$diff_file"; then
+    log ERROR "failed to collect PR diff for $repository#$number"
+    return 1
+  fi
+  if ! diff_digest=$(sha256sum "$diff_file" | awk '{print $1}'); then
+    log ERROR "failed to hash PR diff for $repository#$number"
+    return 1
+  fi
+
   if ! jq -e \
     --arg repository "$repository" \
     --arg sentry_login "$SENTRY_LOGIN" \
     --arg marker_prefix "$marker_prefix" \
     --arg sentry_identity "$ORACLE_PR_SENTRY_IDENTITY" \
+    --arg diff_digest "$diff_digest" \
     --slurpfile review_pages "$review_pages" '
       def text:
         (. // "") | tostring;
       def parse_marker:
+        (
+          (try (
+            .body
+            | capture(
+                "(?:^|\\n)<!-- oracle-pr-sentry:v5 identity=(?<identity>[A-Za-z0-9._-]+) kind=review fingerprint=(?<fingerprint>[0-9a-f]{64}) input=(?<input_fingerprint>[0-9a-f]{64}) context=(?<context_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) failures=(?<encoded_ci_failures>[A-Za-z0-9+/]+={0,2}) external=(?<external_digest>[0-9a-f]{64}) -->\\n?$"
+              )
+            | .event_sequence |= tonumber
+            | .encoded_ci_failures as $encoded_ci_failures
+            | ($encoded_ci_failures | @base64d | fromjson) as $ci_failures
+            | select(
+                ($ci_failures | type) == "array"
+                and all(
+                  $ci_failures[];
+                  type == "object"
+                  and keys == ["name", "workflow"]
+                  and (.name | type == "string")
+                  and (.workflow | type == "string")
+                )
+              )
+            | ($ci_failures | map({workflow, name}) | unique_by([.workflow, .name])) as $normalized_ci_failures
+            | select($ci_failures == $normalized_ci_failures)
+            | del(.encoded_ci_failures)
+            | . + {
+                version: 5,
+                kind: "review",
+                draft: false,
+                ci_failures: $normalized_ci_failures,
+                ci_digest: "",
+                marker: (
+                  "<!-- oracle-pr-sentry:v5 identity=" + .identity
+                  + " kind=review fingerprint=" + .fingerprint
+                  + " input=" + .input_fingerprint
+                  + " context=" + .context_fingerprint
+                  + " head=" + .head_sha
+                  + " event=" + (.event_sequence | tostring)
+                  + " failures=" + $encoded_ci_failures
+                  + " external=" + .external_digest
+                  + " -->"
+                )
+              }
+          ) catch null) // null
+        ) as $v5_review
+        | if $v5_review != null
+          then $v5_review
+          else
+        (
+          (try (
+            .body
+            | capture(
+                "(?:^|\\n)<!-- oracle-pr-sentry:v5 identity=(?<identity>[A-Za-z0-9._-]+) kind=baseline input=(?<input_fingerprint>[0-9a-f]{64}) context=(?<context_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) draft=(?<draft>true|false) failures=(?<encoded_ci_failures>[A-Za-z0-9+/]+={0,2}) external=(?<external_digest>[0-9a-f]{64}) -->\\n?$"
+              )
+            | .event_sequence |= tonumber
+            | .draft |= (. == "true")
+            | .encoded_ci_failures as $encoded_ci_failures
+            | ($encoded_ci_failures | @base64d | fromjson) as $ci_failures
+            | select(
+                ($ci_failures | type) == "array"
+                and all(
+                  $ci_failures[];
+                  type == "object"
+                  and keys == ["name", "workflow"]
+                  and (.name | type == "string")
+                  and (.workflow | type == "string")
+                )
+              )
+            | ($ci_failures | map({workflow, name}) | unique_by([.workflow, .name])) as $normalized_ci_failures
+            | select($ci_failures == $normalized_ci_failures)
+            | del(.encoded_ci_failures)
+            | . + {
+                version: 5,
+                kind: "baseline",
+                fingerprint: "",
+                ci_failures: $normalized_ci_failures,
+                ci_digest: "",
+                marker: (
+                  "<!-- oracle-pr-sentry:v5 identity=" + .identity
+                  + " kind=baseline input=" + .input_fingerprint
+                  + " context=" + .context_fingerprint
+                  + " head=" + .head_sha
+                  + " event=" + (.event_sequence | tostring)
+                  + " draft=" + (.draft | tostring)
+                  + " failures=" + $encoded_ci_failures
+                  + " external=" + .external_digest
+                  + " -->"
+                )
+              }
+          ) catch null) // null
+        ) as $v5_baseline
+        | if $v5_baseline != null
+          then $v5_baseline
+          else
         (
           (try (
             .body
@@ -860,6 +984,8 @@ collect_snapshot() {
                 )
               end
           end
+        end
+        end
         end;
       def trusted_marker:
         . as $activity
@@ -938,6 +1064,9 @@ collect_snapshot() {
             ref: (.headRefName | text),
             sha: (.headRefOid | text)
           },
+          diff: {
+            sha256: $diff_digest
+          },
           checks: [
             (.statusCheckRollup // [])[] | {
               name: ((.name // .context) | text),
@@ -990,7 +1119,9 @@ collect_snapshot() {
     and (.url | type == "string")
     and (.state | type == "string")
     and (.draft | type == "boolean")
+    and (.base.ref | type == "string")
     and (.head.sha | type == "string" and test("^[0-9A-Fa-f]{40,64}$"))
+    and (.diff.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
     and (.checks | type == "array")
     and (.external_activity | type == "array")
     and (.publications | type == "array")
@@ -1030,7 +1161,9 @@ snapshot_facts() {
 
   SNAPSHOT_KEY=$(jq -r '.key' "$snapshot_file") || return 1
   SNAPSHOT_URL=$(jq -r '.url' "$snapshot_file") || return 1
+  SNAPSHOT_BASE_REF=$(jq -r '.base.ref' "$snapshot_file") || return 1
   SNAPSHOT_HEAD=$(jq -r '.head.sha' "$snapshot_file") || return 1
+  SNAPSHOT_DIFF_DIGEST=$(jq -r '.diff.sha256' "$snapshot_file") || return 1
   SNAPSHOT_DRAFT=$(jq -r '.draft' "$snapshot_file") || return 1
   SNAPSHOT_STATE=$(jq -r '.state' "$snapshot_file") || return 1
   SNAPSHOT_CI_JSON=$(jq -cS '
@@ -1064,16 +1197,28 @@ snapshot_facts() {
   SNAPSHOT_CI_DIGEST=$(digest_text "$SNAPSHOT_CI_IDENTITIES_JSON") || return 1
   SNAPSHOT_EXTERNAL_JSON=$(jq -cS '.external_activity' "$snapshot_file") || return 1
   SNAPSHOT_EXTERNAL_DIGEST=$(digest_text "$SNAPSHOT_EXTERNAL_JSON") || return 1
-  SNAPSHOT_FINGERPRINT=$(jq -cnS \
+  SNAPSHOT_CONTEXT_FINGERPRINT=$(jq -cnS \
+    --arg base_ref "$SNAPSHOT_BASE_REF" \
     --arg head_sha "$SNAPSHOT_HEAD" \
-    --arg ci_digest "$SNAPSHOT_CI_DIGEST" \
+    --arg diff_digest "$SNAPSHOT_DIFF_DIGEST" \
     --arg external_digest "$SNAPSHOT_EXTERNAL_DIGEST" '
       {
         schema_version: 1,
+        base_ref: $base_ref,
         head_sha: $head_sha,
-        ready: true,
-        ci_digest: $ci_digest,
+        diff_digest: $diff_digest,
         external_digest: $external_digest
+      }
+    ' | sha256sum | awk '{print $1}') || return 1
+  SNAPSHOT_FINGERPRINT=$(jq -cnS \
+    --arg context_fingerprint "$SNAPSHOT_CONTEXT_FINGERPRINT" \
+    --arg ci_digest "$SNAPSHOT_CI_DIGEST" \
+    '
+      {
+        schema_version: 2,
+        context_fingerprint: $context_fingerprint,
+        ready: true,
+        ci_digest: $ci_digest
       }
     ' | sha256sum | awk '{print $1}') || return 1
   SNAPSHOT_INPUT_FINGERPRINT=$SNAPSHOT_FINGERPRINT
@@ -1116,9 +1261,9 @@ snapshot_facts() {
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .ci_failures // []
   ' "$snapshot_file") || return 1
-  SNAPSHOT_LATEST_EVENT_EXTERNAL_DIGEST=$(jq -r '
+  SNAPSHOT_LATEST_EVENT_CONTEXT_FINGERPRINT=$(jq -r '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
-    | .external_digest // ""
+    | .context_fingerprint // ""
   ' "$snapshot_file") || return 1
   SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
 }
@@ -1144,8 +1289,7 @@ latest_baseline_matches_snapshot() {
   [[ "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
     "$SNAPSHOT_LATEST_PUBLICATION_INPUT" == "$SNAPSHOT_INPUT_FINGERPRINT" &&
     "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" &&
-    "$SNAPSHOT_LATEST_EVENT_DRAFT" == "$SNAPSHOT_DRAFT" &&
-    "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" == "$SNAPSHOT_CI_DIGEST" ]]
+    "$SNAPSHOT_LATEST_EVENT_DRAFT" == "$SNAPSHOT_DRAFT" ]]
 }
 
 latest_publication_matches_snapshot() {
@@ -1167,7 +1311,10 @@ publish_baseline() {
   local initial_head=$SNAPSHOT_HEAD
   local initial_draft=$SNAPSHOT_DRAFT
   local initial_input_fingerprint=$SNAPSHOT_INPUT_FINGERPRINT
+  local initial_context_fingerprint=$SNAPSHOT_CONTEXT_FINGERPRINT
   local initial_ci_digest=$SNAPSHOT_CI_DIGEST
+  local initial_ci_identities_b64=$SNAPSHOT_CI_IDENTITIES_B64
+  local initial_external_digest=$SNAPSHOT_EXTERNAL_DIGEST
   local initial_event_sequence=$SNAPSHOT_EVENT_SEQUENCE
   local baseline_marker
 
@@ -1199,7 +1346,7 @@ publish_baseline() {
     return 1
   fi
 
-  baseline_marker="<!-- $PROGRAM_NAME:v3 identity=$ORACLE_PR_SENTRY_IDENTITY kind=baseline input=$initial_input_fingerprint head=$initial_head event=$initial_event_sequence draft=$initial_draft ci=$initial_ci_digest -->"
+  baseline_marker="<!-- $PROGRAM_NAME:v5 identity=$ORACLE_PR_SENTRY_IDENTITY kind=baseline input=$initial_input_fingerprint context=$initial_context_fingerprint head=$initial_head event=$initial_event_sequence draft=$initial_draft failures=$initial_ci_identities_b64 external=$initial_external_digest -->"
   if ! printf '%s\n' "$baseline_marker" >"$marker_file" ||
     ! gh pr comment "$number" --repo "$repository" --body-file "$marker_file"; then
     log ERROR "failed to publish baseline marker for $repository#$number"
@@ -1222,6 +1369,8 @@ record_success() {
   if ! state_mark_reviewed \
     "$SNAPSHOT_KEY" \
     "$SNAPSHOT_FINGERPRINT" \
+    "$SNAPSHOT_INPUT_FINGERPRINT" \
+    "$SNAPSHOT_CONTEXT_FINGERPRINT" \
     "$SNAPSHOT_HEAD" \
     "$SNAPSHOT_CI_DIGEST" \
     "$SNAPSHOT_EXTERNAL_DIGEST" \
@@ -1244,8 +1393,7 @@ run_oracle_review() {
   local metadata_file="$work_directory/metadata.json"
   local diff_file="$work_directory/pr.diff"
   local output_file="$work_directory/review.md"
-  local prompt
-  local output_size
+  local prompt output_size expected_diff_digest actual_diff_digest
   local oracle_args=(
     --engine browser
     --model "$ORACLE_PR_SENTRY_ORACLE_MODEL"
@@ -1266,8 +1414,11 @@ run_oracle_review() {
     log ERROR "failed to build Oracle metadata for $repository#$number"
     return 1
   fi
-  if ! gh pr diff "$number" --repo "$repository" >"$diff_file"; then
-    log ERROR "failed to fetch diff for $repository#$number"
+  expected_diff_digest=$(jq -r '.diff.sha256' "$snapshot_file") || return 1
+  if [[ ! -f "$diff_file" ]] ||
+    ! actual_diff_digest=$(sha256sum "$diff_file" | awk '{print $1}') ||
+    [[ "$actual_diff_digest" != "$expected_diff_digest" ]]; then
+    log ERROR "collected PR diff no longer matches the snapshot for $repository#$number"
     return 1
   fi
 
@@ -1382,7 +1533,7 @@ publish_review() {
 process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
-  local comparison_fingerprint comparison_head comparison_external
+  local comparison_fingerprint comparison_context comparison_head comparison_external
   local observed_ci observed_ci_json observed_draft
   local new_ci_failure_count latest_ci_failure_count reason publish_status
   local baseline_marker=""
@@ -1419,7 +1570,10 @@ process_candidate() {
 
   old_entry=$(jq -c --arg key "$SNAPSHOT_KEY" '.prs[$key] // {}' <<<"$STATE_JSON") || return 1
   comparison_fingerprint=$(jq -r \
-    '.comparison.fingerprint // .reviewed.fingerprint // ""' \
+    '.comparison.fingerprint // .reviewed.input_fingerprint // .reviewed.fingerprint // ""' \
+    <<<"$old_entry") || return 1
+  comparison_context=$(jq -r \
+    '.comparison.context_fingerprint // .reviewed.context_fingerprint // ""' \
     <<<"$old_entry") || return 1
   comparison_head=$(jq -r \
     '.comparison.head_sha // .reviewed.head_sha // ""' \
@@ -1459,7 +1613,8 @@ process_candidate() {
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" "$SNAPSHOT_DRAFT" \
         "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
         ! state_mark_comparison \
-          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD" \
+          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" \
+          "$SNAPSHOT_CONTEXT_FINGERPRINT" "$SNAPSHOT_HEAD" \
           "$SNAPSHOT_DRAFT" "$SNAPSHOT_CI_DIGEST" \
           "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
           "$SNAPSHOT_LATEST_PUBLICATION_MARKER" ||
@@ -1486,7 +1641,8 @@ process_candidate() {
       fi
       if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] &&
         ! state_mark_comparison \
-          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD" \
+          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" \
+          "$SNAPSHOT_CONTEXT_FINGERPRINT" "$SNAPSHOT_HEAD" \
           true "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
           "$baseline_marker"; then
         return 1
@@ -1504,19 +1660,22 @@ process_candidate() {
     "$SNAPSHOT_LATEST_EVENT_DRAFT" == "true") ]]; then
     reason="draft-to-ready"
   elif [[ -z "$comparison_fingerprint" &&
+    "$SNAPSHOT_LATEST_EVENT_VERSION" -ge 5 &&
+    "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" &&
+    "$SNAPSHOT_LATEST_PUBLICATION_INPUT" != "$SNAPSHOT_INPUT_FINGERPRINT" &&
+    "$SNAPSHOT_LATEST_EVENT_CONTEXT_FINGERPRINT" == "$SNAPSHOT_CONTEXT_FINGERPRINT" ]]; then
+    if ((latest_ci_failure_count > 0)); then
+      reason="ci-failure"
+    else
+      reason=""
+    fi
+  elif [[ -z "$comparison_fingerprint" &&
     "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
+    "$SNAPSHOT_LATEST_EVENT_VERSION" -lt 5 &&
     "$SNAPSHOT_LATEST_EVENT_DRAFT" == "false" &&
     "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" != "$SNAPSHOT_CI_DIGEST" ]] &&
     ((SNAPSHOT_CI_FAILURE_COUNT > 0)); then
     reason="ci-failure"
-  elif [[ -z "$comparison_fingerprint" &&
-    "$SNAPSHOT_LATEST_EVENT_KIND" == "review" &&
-    "$SNAPSHOT_LATEST_EVENT_VERSION" -ge 4 &&
-    "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" &&
-    "$SNAPSHOT_LATEST_PUBLICATION_INPUT" != "$SNAPSHOT_INPUT_FINGERPRINT" &&
-    "$SNAPSHOT_LATEST_EVENT_EXTERNAL_DIGEST" == "$SNAPSHOT_EXTERNAL_DIGEST" ]] &&
-    ((latest_ci_failure_count == 0)); then
-    reason=""
   elif [[ -z "$comparison_fingerprint" ]]; then
     reason="new-pr"
   elif [[ "$comparison_head" != "$SNAPSHOT_HEAD" ]]; then
@@ -1527,6 +1686,8 @@ process_candidate() {
     reason=""
   elif [[ "$comparison_external" != "$SNAPSHOT_EXTERNAL_DIGEST" ]]; then
     reason="external-activity"
+  elif [[ "$comparison_context" != "$SNAPSHOT_CONTEXT_FINGERPRINT" ]]; then
+    reason="review-input-changed"
   else
     reason=""
   fi
@@ -1547,7 +1708,8 @@ process_candidate() {
       fi
       if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] &&
         ! state_mark_comparison \
-          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD" \
+          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" \
+          "$SNAPSHOT_CONTEXT_FINGERPRINT" "$SNAPSHOT_HEAD" \
           false "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
           "$baseline_marker"; then
         return 1
@@ -1576,7 +1738,7 @@ process_candidate() {
     log ERROR "failed to calculate event fingerprint for $SNAPSHOT_KEY"
     return 1
   fi
-  SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v4 identity=$ORACLE_PR_SENTRY_IDENTITY kind=review fingerprint=$SNAPSHOT_FINGERPRINT input=$SNAPSHOT_INPUT_FINGERPRINT head=$SNAPSHOT_HEAD event=$SNAPSHOT_EVENT_SEQUENCE failures=$SNAPSHOT_CI_IDENTITIES_B64 external=$SNAPSHOT_EXTERNAL_DIGEST -->"
+  SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v5 identity=$ORACLE_PR_SENTRY_IDENTITY kind=review fingerprint=$SNAPSHOT_FINGERPRINT input=$SNAPSHOT_INPUT_FINGERPRINT context=$SNAPSHOT_CONTEXT_FINGERPRINT head=$SNAPSHOT_HEAD event=$SNAPSHOT_EVENT_SEQUENCE failures=$SNAPSHOT_CI_IDENTITIES_B64 external=$SNAPSHOT_EXTERNAL_DIGEST -->"
 
   if snapshot_has_publication "$SNAPSHOT_FILE" "$SNAPSHOT_FINGERPRINT" "$SNAPSHOT_HEAD"; then
     log INFO "matching GitHub marker found for $SNAPSHOT_KEY; recovering local state"

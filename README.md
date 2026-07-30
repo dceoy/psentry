@@ -170,6 +170,7 @@ Ready, open pull requests in non-archived repositories are reviewed when:
 - they are first observed;
 - they transition from draft to ready;
 - their head SHA changes;
+- their base ref or effective unified diff changes;
 - a check for the current head reaches a relevant failure conclusion;
 - an external review, issue comment, or inline review comment changes.
 

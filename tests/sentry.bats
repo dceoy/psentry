@@ -40,6 +40,39 @@ setup() {
   [[ "$output" == *"head-sha-changed"* ]]
 }
 
+@test "a changed PR diff with the same head schedules a new review" {
+  changed_diff="$BATS_TEST_TMPDIR/changed-pr.diff"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  {
+    printf '%s\n' "$(<"$GH_DIFF_FIXTURE")"
+    printf '%s\n' '+base branch changed the effective diff'
+  } >"$changed_diff"
+  export GH_DIFF_FIXTURE="$changed_diff"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"review-input-changed"* ]]
+}
+
+@test "retargeting a PR with the same head and diff schedules a new review" {
+  retargeted_fixture="$BATS_TEST_TMPDIR/pr-retargeted.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  jq '.baseRefName = "release"' "$GH_FIXTURE" >"$retargeted_fixture"
+  export GH_FIXTURE="$retargeted_fixture"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"review-input-changed"* ]]
+}
+
 @test "a head transition back to an older reviewed SHA schedules a new review" {
   invoke_sentry
   [ "$status" -eq 0 ]
@@ -255,6 +288,36 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
   [ "$(oracle_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
+@test "durable baseline failure identities survive consecutive state loss" {
+  three_failures="$BATS_TEST_TMPDIR/three-failures.json"
+  two_failures="$BATS_TEST_TMPDIR/two-failures.json"
+  one_failure="$BATS_TEST_TMPDIR/one-failure.json"
+  make_ci_failure_fixture "$three_failures" lint test typecheck
+  make_ci_failure_fixture "$two_failures" lint test
+  make_ci_failure_fixture "$one_failure" test
+
+  export GH_FIXTURE="$three_failures"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  export GH_FIXTURE="$two_failures"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  export GH_FIXTURE="$one_failure"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 2 ]
   [[ "$output" == *"no meaningful update"* ]]
 }
 
@@ -620,6 +683,15 @@ setup() {
 
 @test "new activity during Oracle execution discards the stale review" {
   export GH_RACE_ACTIVITY=1
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"review inputs changed"* ]]
+}
+
+@test "a diff change during Oracle execution discards the stale review" {
+  export GH_RACE_DIFF=1
   invoke_sentry
 
   [ "$status" -ne 0 ]
