@@ -61,6 +61,14 @@ are projected to stable fields and sorted deterministically.
   "reviews": [],
   "comments": [],
   "review_comments": [],
+  "review_threads": [
+    {
+      "kind": "review_thread",
+      "id": "stable-graphql-node-id",
+      "is_resolved": false,
+      "is_outdated": false
+    }
+  ],
   "external_activity": [],
   "publications": [],
   "files": [
@@ -72,8 +80,10 @@ are projected to stable fields and sorted deterministically.
 Reviews, issue comments, and inline review comments share a normalized activity
 shape with `kind`, `id`, `author`, created/updated times, review state, optional
 path/line/commit, and body. They are sorted by creation time, kind, and stable
-ID. Changed files are sorted by path; checks are sorted by workflow, name, and
-details URL.
+ID. Review threads add their stable GraphQL node ID and resolved/outdated
+state to that activity projection, so resolving or reopening a conversation
+changes the external-activity digest even when no comment is edited. Changed
+files are sorted by path; checks are sorted by workflow, name, and details URL.
 
 The `publications` collection contains only successfully parsed sentry markers
 found in activity authored by the currently authenticated GitHub login with

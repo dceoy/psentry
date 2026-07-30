@@ -528,6 +528,32 @@ setup() {
   [[ "$output" == *"external-activity"* ]]
 }
 
+@test "resolving a review thread schedules a new review" {
+  export GH_REVIEW_THREAD_RESOLVED=false
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_REVIEW_THREAD_RESOLVED=true
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"external-activity"* ]]
+}
+
+@test "reopening a review thread schedules a new review" {
+  export GH_REVIEW_THREAD_RESOLVED=true
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_REVIEW_THREAD_RESOLVED=false
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"external-activity"* ]]
+}
+
 @test "reordered equivalent GitHub arrays keep the same fingerprint" {
   ordered_fixture="$BATS_TEST_TMPDIR/ordered.json"
   reordered_fixture="$BATS_TEST_TMPDIR/reordered.json"
@@ -640,6 +666,8 @@ setup() {
   for controlled_argument in \
     --background=true --no-background \
     --wait --wait=true --no-wait --no-wait=true \
+    --dry-run --dry-run=true --preview --preview=true \
+    --render --render=true --render-markdown --render-markdown=true \
     --include --include=/tmp/secret \
     --files --files=/tmp/secret \
     --path --path=/tmp/secret \

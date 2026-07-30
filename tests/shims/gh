@@ -96,6 +96,37 @@ case "${1:-} ${2:-}" in
   "api user")
     printf 'sentry-bot\n'
     ;;
+  "api graphql")
+    if [[ -z "${GH_REVIEW_THREAD_RESOLVED:-}" ]]; then
+      review_threads='[]'
+    else
+      review_threads=$(jq -cn \
+        --argjson resolved "$GH_REVIEW_THREAD_RESOLVED" '
+          [{
+            id: "PRRT_kwDOexample",
+            isResolved: $resolved,
+            isOutdated: false
+          }]
+        ')
+    fi
+    jq -cn --argjson review_threads "$review_threads" '
+      [{
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: $review_threads,
+                pageInfo: {
+                  hasNextPage: false,
+                  endCursor: null
+                }
+              }
+            }
+          }
+        }
+      }]
+    '
+    ;;
   "search prs")
     search_query=${3:-}
     search_limit=30

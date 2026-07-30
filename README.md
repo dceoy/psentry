@@ -153,9 +153,9 @@ lines:
 
 The sentry rejects extra arguments that could replace its engine, prompt,
 attachments (including Oracle's file-input aliases), output path,
-background/wait behavior, or dry-run controls. The browser engine, single-tab
-concurrency, attached bounded foreground execution, and write-output path
-remain fixed by the executable.
+background/wait behavior, or dry-run/preview/render controls. The browser
+engine, single-tab concurrency, attached bounded foreground execution, and
+write-output path remain fixed by the executable.
 
 If `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` is raised above 30 minutes, also raise
 the service's `RuntimeMaxSec` and `TimeoutStartSec`, then reinstall the unit.

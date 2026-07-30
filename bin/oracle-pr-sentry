@@ -358,7 +358,8 @@ load_oracle_extra_args() {
         --paths | --paths=* | --write-output | --write-output=* | \
         --background | --background=* | --no-background | --no-background=* | \
         --wait | --wait=* | --no-wait | --no-wait=* | --dry-run | --dry-run=* | \
-        --render | --copy | --models | --models=* | \
+        --preview | --preview=* | --render | --render=* | \
+        --render-markdown | --render-markdown=* | --copy | --models | --models=* | \
         --followup | --followup=* | --generate-image | --generate-image=* | \
         --edit-image | --edit-image=* | --output | --output=* | \
         --browser-max-concurrent-tabs | --browser-max-concurrent-tabs=* | \
@@ -735,9 +736,13 @@ collect_snapshot() {
   local work_directory=$3
   local raw_pr="$work_directory/pr.json"
   local review_pages="$work_directory/review-comments.json"
+  local review_thread_pages="$work_directory/review-threads.json"
   local diff_file="$work_directory/pr.diff"
   local snapshot_file="$work_directory/snapshot.json"
   local marker_prefix="<!-- $PROGRAM_NAME:v"
+  local repository_owner=${repository%%/*}
+  local repository_name=${repository#*/}
+  local review_threads_query
   local diff_digest
 
   if ! gh pr view "$number" --repo "$repository" --json \
@@ -750,6 +755,57 @@ collect_snapshot() {
   if ! gh api --paginate --slurp \
     "repos/$repository/pulls/$number/comments?per_page=100" >"$review_pages"; then
     log ERROR "failed to collect inline review discussion for $repository#$number"
+    return 1
+  fi
+
+  # shellcheck disable=SC2016  # GraphQL variables must remain literal here.
+  review_threads_query='
+    query(
+      $owner: String!,
+      $name: String!,
+      $number: Int!,
+      $endCursor: String
+    ) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $endCursor) {
+            nodes {
+              id
+              isResolved
+              isOutdated
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+  '
+  if ! gh api graphql --paginate --slurp \
+    -f query="$review_threads_query" \
+    -F owner="$repository_owner" \
+    -F name="$repository_name" \
+    -F number="$number" >"$review_thread_pages"; then
+    log ERROR "failed to collect review-thread state for $repository#$number"
+    return 1
+  fi
+  if ! jq -e '
+    type == "array"
+    and length > 0
+    and all(
+      .[];
+      (.data.repository.pullRequest.reviewThreads.nodes | type) == "array"
+      and all(
+        .data.repository.pullRequest.reviewThreads.nodes[];
+        (.id | type) == "string"
+        and (.isResolved | type) == "boolean"
+        and (.isOutdated | type) == "boolean"
+      )
+    )
+  ' "$review_thread_pages" >/dev/null; then
+    log ERROR "GitHub returned invalid review-thread state for $repository#$number"
     return 1
   fi
 
@@ -768,7 +824,8 @@ collect_snapshot() {
     --arg marker_prefix "$marker_prefix" \
     --arg sentry_identity "$ORACLE_PR_SENTRY_IDENTITY" \
     --arg diff_digest "$diff_digest" \
-    --slurpfile review_pages "$review_pages" '
+    --slurpfile review_pages "$review_pages" \
+    --slurpfile review_thread_pages "$review_thread_pages" '
       def text:
         (. // "") | tostring;
       def parse_marker:
@@ -1002,6 +1059,27 @@ collect_snapshot() {
 
       ($review_pages | flatten) as $inline_comments
       | (
+          $review_thread_pages
+          | flatten
+          | map(.data.repository.pullRequest.reviewThreads.nodes)
+          | flatten
+          | map({
+              kind: "review_thread",
+              id: (.id | text),
+              author: "",
+              created_at: "",
+              updated_at: "",
+              state: "",
+              path: "",
+              line: null,
+              commit_id: "",
+              body: "",
+              is_resolved: .isResolved,
+              is_outdated: .isOutdated
+            })
+          | sort_by(.id)
+        ) as $review_threads
+      | (
           [
             (.reviews // [])[] | {
               kind: "review",
@@ -1044,6 +1122,7 @@ collect_snapshot() {
               body: (.body | text)
             }
           ]
+          + $review_threads
           | sort_by([.created_at, .kind, .id])
         ) as $activities
       | {
@@ -1087,6 +1166,7 @@ collect_snapshot() {
           review_comments: [
             $activities[] | select(.kind == "review_comment")
           ],
+          review_threads: $review_threads,
           external_activity: [
             $activities[] | select((trusted_marker) == null)
           ],
@@ -1124,6 +1204,7 @@ collect_snapshot() {
     and (.diff.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
     and (.checks | type == "array")
     and (.external_activity | type == "array")
+    and (.review_threads | type == "array")
     and (.publications | type == "array")
     and (.files | type == "array")
   ' "$snapshot_file" >/dev/null; then
