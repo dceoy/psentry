@@ -123,18 +123,22 @@ The context fingerprint is the SHA-256 of canonical JSON containing:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "base_ref": "main",
   "head_sha": "...",
   "diff_digest": "...",
-  "external_digest": "..."
+  "external_digest": "...",
+  "requirements": {
+    "title": "Pull request title",
+    "body": "Pull request body"
+  }
 }
 ```
 
 The final input fingerprint hashes that context fingerprint together with the
-CI digest and ready state. Consequently a base retarget or a base-branch update
-that changes the effective PR diff schedules a new review even when the head
-SHA is unchanged.
+CI digest and ready state. Consequently a title/body edit, base retarget, or
+base-branch update that changes the effective PR diff schedules a new review
+even when the head SHA is unchanged.
 
 A differing fingerprint is reviewed only when it represents first observation,
 draft readiness, a new head, a changed base/diff context, a newly added
@@ -149,10 +153,13 @@ GitHub markers. The GitHub-observable sequence distinguishes repeated
 transitions, including a head returning to an older commit, without depending
 on resettable local state.
 
-The pull request title, body, files, checks, and discussion remain in the
-metadata supplied to Oracle. Code changes are represented by the head SHA,
-base ref, and exact diff digest; labels, assignees, milestones, and generic
-GitHub `updatedAt` are intentionally absent from the trigger projection.
+The pull request title, body, files, checks, and external discussion remain in
+the metadata supplied to Oracle. Trusted sentry publications are removed from
+the review, comment, and inline-comment arrays before upload so generated
+reviews do not recursively become later model input. Code changes are
+represented by the head SHA, base ref, and exact diff digest; labels,
+assignees, milestones, and generic GitHub `updatedAt` are intentionally absent
+from the trigger projection.
 
 ## State schema
 

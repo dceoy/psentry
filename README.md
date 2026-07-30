@@ -172,6 +172,7 @@ Ready, open pull requests in non-archived repositories are reviewed when:
 - they are first observed;
 - they transition from draft to ready;
 - their head SHA changes;
+- their title or body changes;
 - their base ref or effective unified diff changes;
 - a check for the current head reaches a relevant failure conclusion;
 - an external review, issue comment, or inline review comment changes.
@@ -183,8 +184,9 @@ authenticated sentry account authored them, so another participant cannot
 spoof a marker to suppress a review.
 
 Oracle receives only the normalized pull request metadata, unified diff, and
-the local review prompt. The MVP does not clone or inspect the full repository.
-See [docs/architecture.md](docs/architecture.md) for the snapshot schema,
+the local review prompt. Prior trusted sentry publications are excluded from
+that metadata. The MVP does not clone or inspect the full repository. See
+[docs/architecture.md](docs/architecture.md) for the snapshot schema,
 fingerprint, race handling, and state model.
 
 ## Timer and logs

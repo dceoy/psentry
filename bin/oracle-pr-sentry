@@ -1435,6 +1435,8 @@ collect_snapshot() {
     and (.number | type == "number" and floor == . and . > 0)
     and (.key | type == "string")
     and (.url | type == "string")
+    and (.title | type == "string")
+    and (.body | type == "string")
     and (.state | type == "string")
     and (.draft | type == "boolean")
     and (.base.ref | type == "string")
@@ -1484,6 +1486,8 @@ snapshot_facts() {
   SNAPSHOT_BASE_REF=$(jq -r '.base.ref' "$snapshot_file") || return 1
   SNAPSHOT_HEAD=$(jq -r '.head.sha' "$snapshot_file") || return 1
   SNAPSHOT_DIFF_DIGEST=$(jq -r '.diff.sha256' "$snapshot_file") || return 1
+  SNAPSHOT_REQUIREMENTS_JSON=$(jq -cS '{title, body}' "$snapshot_file") ||
+    return 1
   SNAPSHOT_DRAFT=$(jq -r '.draft' "$snapshot_file") || return 1
   SNAPSHOT_STATE=$(jq -r '.state' "$snapshot_file") || return 1
   SNAPSHOT_CI_JSON=$(jq -cS '
@@ -1528,13 +1532,15 @@ snapshot_facts() {
     --arg base_ref "$SNAPSHOT_BASE_REF" \
     --arg head_sha "$SNAPSHOT_HEAD" \
     --arg diff_digest "$SNAPSHOT_DIFF_DIGEST" \
-    --arg external_digest "$SNAPSHOT_EXTERNAL_DIGEST" '
+    --arg external_digest "$SNAPSHOT_EXTERNAL_DIGEST" \
+    --argjson requirements "$SNAPSHOT_REQUIREMENTS_JSON" '
       {
-        schema_version: 1,
+        schema_version: 2,
         base_ref: $base_ref,
         head_sha: $head_sha,
         diff_digest: $diff_digest,
-        external_digest: $external_digest
+        external_digest: $external_digest,
+        requirements: $requirements
       }
     ' | sha256sum | awk '{print $1}') || return 1
   SNAPSHOT_FINGERPRINT=$(jq -cnS \
@@ -1738,7 +1744,18 @@ run_oracle_review() {
   fi
   oracle_args+=("${ORACLE_EXTRA_ARGS[@]}")
 
-  if ! jq -S 'del(.publications)' "$snapshot_file" >"$metadata_file"; then
+  if ! jq -S '
+    .reviews = [
+      .external_activity[] | select(.kind == "review")
+    ]
+    | .comments = [
+        .external_activity[] | select(.kind == "comment")
+      ]
+    | .review_comments = [
+        .external_activity[] | select(.kind == "review_comment")
+      ]
+    | del(.publications)
+  ' "$snapshot_file" >"$metadata_file"; then
     log ERROR "failed to build Oracle metadata for $repository#$number"
     return 1
   fi

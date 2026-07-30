@@ -73,6 +73,38 @@ setup() {
   [[ "$output" == *"review-input-changed"* ]]
 }
 
+@test "editing the PR title with the same head and diff schedules a new review" {
+  updated_fixture="$BATS_TEST_TMPDIR/pr-title-updated.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  jq '.title = "Clarify the feature requirements"' \
+    "$GH_FIXTURE" >"$updated_fixture"
+  export GH_FIXTURE="$updated_fixture"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"review-input-changed"* ]]
+}
+
+@test "editing the PR body with the same head and diff schedules a new review" {
+  updated_fixture="$BATS_TEST_TMPDIR/pr-body-updated.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  jq '.body = "Implements the feature with revised requirements."' \
+    "$GH_FIXTURE" >"$updated_fixture"
+  export GH_FIXTURE="$updated_fixture"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"review-input-changed"* ]]
+}
+
 @test "a head transition back to an older reviewed SHA schedules a new review" {
   invoke_sentry
   [ "$status" -eq 0 ]
@@ -842,6 +874,15 @@ setup() {
   [[ "$output" == *"review inputs changed"* ]]
 }
 
+@test "changed PR requirements during Oracle execution discard the stale review" {
+  export GH_RACE_REQUIREMENTS=1
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"review inputs changed"* ]]
+}
+
 @test "a diff change during Oracle execution discards the stale review" {
   export GH_RACE_DIFF=1
   invoke_sentry
@@ -849,6 +890,25 @@ setup() {
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 0 ]
   [[ "$output" == *"review inputs changed"* ]]
+}
+
+@test "trusted sentry publications are absent from later Oracle metadata" {
+  updated_fixture="$BATS_TEST_TMPDIR/pr-title-updated.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  jq '.title = "Trigger a second review"' "$GH_FIXTURE" >"$updated_fixture"
+  export GH_FIXTURE="$updated_fixture"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  jq -e '
+    (.reviews | length) == 0
+    and (.comments | length) == 0
+    and (.review_comments | length) == 0
+    and (tostring | contains("<!-- oracle-pr-sentry:v") | not)
+  ' "$GH_SHIM_STATE_DIR/oracle-metadata.json"
 }
 
 @test "a post followed by an atomic state failure recovers from its marker" {

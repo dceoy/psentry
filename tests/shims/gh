@@ -242,6 +242,11 @@ case "${1:-} ${2:-}" in
         ' |
       if [[ "${GH_RACE_HEAD:-0}" == 1 && "$view_count" -gt 1 ]]; then
         jq '.headRefOid = "cccccccccccccccccccccccccccccccccccccccc"'
+      elif [[ "${GH_RACE_REQUIREMENTS:-0}" == 1 && "$view_count" -gt 1 ]]; then
+        jq '
+          .title = "Updated requirements"
+          | .body = "Requirements changed while Oracle was running."
+        '
       elif [[ "${GH_RACE_ACTIVITY:-0}" == 1 && "$view_count" -gt 1 ]]; then
         jq '.comments += [{
           id: "comment-race",

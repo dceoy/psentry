@@ -32,6 +32,10 @@ done
   exit 2
 }
 
+if [[ -n "$metadata_file" ]]; then
+  cp -- "$metadata_file" "$GH_SHIM_STATE_DIR/oracle-metadata.json"
+fi
+
 if [[ -n "${ORACLE_SLEEP:-}" ]]; then
   if [[ -z "${ORACLE_SLEEP_PR_NUMBER:-}" ]] ||
     [[ "$(jq -r '.number // ""' "$metadata_file")" == "$ORACLE_SLEEP_PR_NUMBER" ]]; then
