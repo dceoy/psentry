@@ -51,6 +51,12 @@ are projected to stable fields and sorted deterministically.
     {
       "name": "test",
       "workflow": "CI",
+      "producer": {
+        "kind": "check_run",
+        "workflow_id": "stable-workflow-node-id",
+        "check_suite_id": "stable-check-suite-node-id",
+        "app_id": "stable-app-node-id"
+      },
       "status": "COMPLETED",
       "result": "FAILURE",
       "started_at": "ISO-8601 time",
@@ -83,7 +89,9 @@ path/line/commit, and body. They are sorted by creation time, kind, and stable
 ID. Review threads add their stable GraphQL node ID and resolved/outdated
 state to that activity projection, so resolving or reopening a conversation
 changes the external-activity digest even when no comment is edited. Changed
-files are sorted by path; checks are sorted by workflow, name, and details URL.
+files are sorted by path. Check identity includes stable GraphQL workflow,
+check-suite, and app IDs so independent checks with the same display names do
+not collapse; rerun-specific details URLs remain metadata only.
 
 The `publications` collection contains only successfully parsed sentry markers
 found in activity authored by the currently authenticated GitHub login with
@@ -182,19 +190,19 @@ keys:
 normalized CI failure set and its digest. A review is triggered only when the
 set gains a failure, while an intervening successful observation allows the
 same failure to trigger again later. Whenever the latest trusted GitHub event
-does not represent a draft or unchanged snapshot, the sentry posts a hidden
-baseline marker so that local state loss before either observation cannot erase
-the intervening success or draft transition. Event identity comes from the
-durable sequence shared by baseline and review markers, so state loss or
-retention pruning cannot reuse an older transition fingerprint. Recovering or
-publishing a baseline also records an optional `comparison` checkpoint with
-the matching input, context, head, CI, and external-activity digests when no
-reviewed comparison state exists. Version 5 baseline markers also retain the
-normalized CI failure identities, so consecutive state losses cannot turn a
-shrinking failure set into a new failure event. This preserves trigger
-comparisons across recovery and between consecutive no-review transitions
-without representing the baseline as an Oracle review; the checkpoint is
-removed after the next successful review.
+does not represent a draft or unchanged snapshot, the sentry submits a hidden
+baseline marker as a comment-only review so that local state loss before either
+observation cannot erase the intervening success or draft transition. Event
+identity comes from the durable sequence shared by baseline and generated
+review markers, so state loss or retention pruning cannot reuse an older
+transition fingerprint. Recovering or publishing a baseline also records an
+optional `comparison` checkpoint with the matching input, context, head, CI,
+and external-activity digests when no reviewed comparison state exists.
+Version 5 baseline markers also retain the normalized CI failure identities,
+so consecutive state losses cannot turn a shrinking failure set into a new
+failure event. This preserves trigger comparisons across recovery and between
+consecutive no-review transitions without invoking Oracle; the checkpoint is
+removed after the next successful generated review.
 `reviewed` advances only after GitHub accepts the comment-only review or when
 an already-published exact marker is recovered. Oracle and GitHub failures
 never advance it.
@@ -210,7 +218,7 @@ changes without requiring a separate database or full closed-PR scan.
 
 ## Publication and races
 
-Every review ends with:
+Every generated Oracle review ends with:
 
 ```text
 <!-- oracle-pr-sentry:v5 identity=IDENTITY kind=review fingerprint=SHA256 input=INPUT_SHA256 context=CONTEXT_SHA256 head=HEAD_SHA event=SEQUENCE failures=BASE64_JSON external=EXTERNAL_SHA256 -->

@@ -461,6 +461,25 @@ load_state() {
               and (.workflow | type == "string")
               and (.result | type == "string")
               and (.details_url | type == "string")
+              and (
+                (has("producer") | not)
+                or (
+                  .producer
+                  | type == "object"
+                  and (
+                    (
+                      .kind == "check_run"
+                      and (.workflow_id | type) == "string"
+                      and (.check_suite_id | type) == "string"
+                      and (.app_id | type) == "string"
+                    )
+                    or (
+                      .kind == "status_context"
+                      and (.actor | type) == "string"
+                    )
+                  )
+                )
+              )
             )
           )
         )
@@ -737,18 +756,139 @@ collect_snapshot() {
   local raw_pr="$work_directory/pr.json"
   local review_pages="$work_directory/review-comments.json"
   local review_thread_pages="$work_directory/review-threads.json"
+  local check_pages="$work_directory/check-contexts.json"
   local diff_file="$work_directory/pr.diff"
   local snapshot_file="$work_directory/snapshot.json"
   local marker_prefix="<!-- $PROGRAM_NAME:v"
   local repository_owner=${repository%%/*}
   local repository_name=${repository#*/}
+  local check_contexts_query
   local review_threads_query
-  local diff_digest
+  local diff_digest head_sha
 
   if ! gh pr view "$number" --repo "$repository" --json \
-    number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,statusCheckRollup,reviews,comments,files \
+    number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,reviews,comments,files \
     >"$raw_pr"; then
     log ERROR "failed to collect PR metadata for $repository#$number"
+    return 1
+  fi
+
+  if ! head_sha=$(jq -r '.headRefOid // ""' "$raw_pr") ||
+    [[ ! "$head_sha" =~ ^[0-9A-Fa-f]{40,64}$ ]]; then
+    log ERROR "GitHub returned an invalid head SHA for $repository#$number"
+    return 1
+  fi
+
+  # shellcheck disable=SC2016  # GraphQL variables must remain literal here.
+  check_contexts_query='
+    query(
+      $owner: String!,
+      $name: String!,
+      $head: String!,
+      $endCursor: String
+    ) {
+      repository(owner: $owner, name: $name) {
+        object(expression: $head) {
+          ... on Commit {
+            oid
+            statusCheckRollup {
+              contexts(first: 100, after: $endCursor) {
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name
+                    status
+                    conclusion
+                    startedAt
+                    completedAt
+                    detailsUrl
+                    checkSuite {
+                      id
+                      app {
+                        id
+                      }
+                      workflowRun {
+                        workflow {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                  ... on StatusContext {
+                    context
+                    state
+                    createdAt
+                    targetUrl
+                    creator {
+                      login
+                    }
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  '
+  if ! gh api graphql --paginate --slurp \
+    -f query="$check_contexts_query" \
+    -F owner="$repository_owner" \
+    -F name="$repository_name" \
+    -f head="$head_sha" >"$check_pages"; then
+    log ERROR "failed to collect CI check identities for $repository#$number"
+    return 1
+  fi
+  if ! jq -e --arg head "$head_sha" '
+    type == "array"
+    and length > 0
+    and all(
+      .[];
+      .data.repository.object.oid == $head
+      and (
+        .data.repository.object.statusCheckRollup == null
+        or (
+          (.data.repository.object.statusCheckRollup.contexts.nodes | type) == "array"
+          and all(
+            .data.repository.object.statusCheckRollup.contexts.nodes[];
+            if .__typename == "CheckRun"
+            then
+              (.name | type) == "string"
+              and (.status | type) == "string"
+              and (.conclusion == null or (.conclusion | type) == "string")
+              and (.checkSuite.id | type) == "string"
+              and (
+                .checkSuite.app == null
+                or (.checkSuite.app.id | type) == "string"
+              )
+              and (
+                .checkSuite.workflowRun == null
+                or (
+                  (.checkSuite.workflowRun.workflow.id | type) == "string"
+                  and (.checkSuite.workflowRun.workflow.name | type) == "string"
+                )
+              )
+            elif .__typename == "StatusContext"
+            then
+              (.context | type) == "string"
+              and (.state | type) == "string"
+              and (
+                .creator == null
+                or (.creator.login | type) == "string"
+              )
+            else false
+            end
+          )
+        )
+      )
+    )
+  ' "$check_pages" >/dev/null; then
+    log ERROR "GitHub returned invalid CI check identities for $repository#$number"
     return 1
   fi
 
@@ -824,6 +964,7 @@ collect_snapshot() {
     --arg marker_prefix "$marker_prefix" \
     --arg sentry_identity "$ORACLE_PR_SENTRY_IDENTITY" \
     --arg diff_digest "$diff_digest" \
+    --slurpfile check_pages "$check_pages" \
     --slurpfile review_pages "$review_pages" \
     --slurpfile review_thread_pages "$review_thread_pages" '
       def text:
@@ -1057,7 +1198,15 @@ collect_snapshot() {
               end
           end;
 
-      ($review_pages | flatten) as $inline_comments
+      (
+        $check_pages
+        | flatten
+        | map(
+            .data.repository.object.statusCheckRollup.contexts.nodes // []
+          )
+        | flatten
+      ) as $check_contexts
+      | ($review_pages | flatten) as $inline_comments
       | (
           $review_thread_pages
           | flatten
@@ -1147,16 +1296,43 @@ collect_snapshot() {
             sha256: $diff_digest
           },
           checks: [
-            (.statusCheckRollup // [])[] | {
-              name: ((.name // .context) | text),
-              workflow: (.workflowName | text),
-              status: ((.status // "") | text | ascii_upcase),
-              result: ((.conclusion // .state // "") | text | ascii_upcase),
-              started_at: ((.startedAt // .createdAt) | text),
-              completed_at: (.completedAt | text),
-              details_url: ((.detailsUrl // .targetUrl) | text)
-            }
-          ] | sort_by([.workflow, .name, .details_url]),
+            $check_contexts[]
+            | if .__typename == "CheckRun"
+              then {
+                name: (.name | text),
+                workflow: (.checkSuite.workflowRun.workflow.name | text),
+                producer: {
+                  kind: "check_run",
+                  workflow_id: (.checkSuite.workflowRun.workflow.id | text),
+                  check_suite_id: (.checkSuite.id | text),
+                  app_id: (.checkSuite.app.id | text)
+                },
+                status: (.status | text | ascii_upcase),
+                result: (.conclusion | text | ascii_upcase),
+                started_at: (.startedAt | text),
+                completed_at: (.completedAt | text),
+                details_url: (.detailsUrl | text)
+              }
+              else {
+                name: (.context | text),
+                workflow: "",
+                producer: {
+                  kind: "status_context",
+                  actor: (.creator.login | text)
+                },
+                status: (
+                  if .state == "PENDING" or .state == "EXPECTED"
+                  then "IN_PROGRESS"
+                  else "COMPLETED"
+                  end
+                ),
+                result: (.state | text | ascii_upcase),
+                started_at: (.createdAt | text),
+                completed_at: "",
+                details_url: (.targetUrl | text)
+              }
+              end
+          ] | sort_by([(.producer | tojson), .name, .details_url]),
           reviews: [
             $activities[] | select(.kind == "review")
           ],
@@ -1203,6 +1379,7 @@ collect_snapshot() {
     and (.head.sha | type == "string" and test("^[0-9A-Fa-f]{40,64}$"))
     and (.diff.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
     and (.checks | type == "array")
+    and all(.checks[]; (.producer | type) == "object")
     and (.external_activity | type == "array")
     and (.review_threads | type == "array")
     and (.publications | type == "array")
@@ -1262,6 +1439,7 @@ snapshot_facts() {
       | {
           name,
           workflow,
+          producer,
           result,
           details_url
         }
@@ -1269,7 +1447,13 @@ snapshot_facts() {
   ' "$snapshot_file") || return 1
   SNAPSHOT_CI_FAILURE_COUNT=$(jq 'length' <<<"$SNAPSHOT_CI_JSON") || return 1
   SNAPSHOT_CI_IDENTITIES_JSON=$(jq -cS '
-    map({workflow, name})
+    def producer_key:
+      .producer
+      | to_entries
+      | sort_by(.key)
+      | from_entries
+      | tojson;
+    map({workflow: producer_key, name})
     | unique_by([.workflow, .name])
   ' <<<"$SNAPSHOT_CI_JSON") || return 1
   SNAPSHOT_CI_IDENTITIES_B64=$(jq -rn \
@@ -1429,7 +1613,8 @@ publish_baseline() {
 
   baseline_marker="<!-- $PROGRAM_NAME:v5 identity=$ORACLE_PR_SENTRY_IDENTITY kind=baseline input=$initial_input_fingerprint context=$initial_context_fingerprint head=$initial_head event=$initial_event_sequence draft=$initial_draft failures=$initial_ci_identities_b64 external=$initial_external_digest -->"
   if ! printf '%s\n' "$baseline_marker" >"$marker_file" ||
-    ! gh pr comment "$number" --repo "$repository" --body-file "$marker_file"; then
+    ! gh pr review "$number" --repo "$repository" --comment \
+      --body-file "$marker_file"; then
     log ERROR "failed to publish baseline marker for $repository#$number"
     return 1
   fi
@@ -1672,7 +1857,21 @@ process_candidate() {
       --argjson current "$SNAPSHOT_CI_JSON" \
       --argjson observed "$observed_ci_json" '
         def identities:
-          map({workflow, name})
+          map({
+            workflow: (
+              if has("producer")
+              then (
+                .producer
+                | to_entries
+                | sort_by(.key)
+                | from_entries
+                | tojson
+              )
+              else .workflow
+              end
+            ),
+            name
+          })
           | unique_by([.workflow, .name]);
         (($current | identities) - ($observed | identities)) | length
       ') || return 1

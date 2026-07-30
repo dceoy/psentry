@@ -40,9 +40,9 @@ emit_candidates() {
 append_posted_review() {
   local fixture=$1
   local number=$2
-  local posted_file posted_comment_file
+  local baseline_file posted_file
   local posted_bodies='[]'
-  local posted_comments='[]'
+  local baseline_bodies='[]'
 
   if [[ "${GH_INCLUDE_POSTED_MARKER:-1}" == 1 ]]; then
     for posted_file in "$GH_SHIM_STATE_DIR"/posted-"$number"-*.md; do
@@ -50,16 +50,16 @@ append_posted_review() {
       posted_bodies=$(jq -c --rawfile body "$posted_file" '. + [$body]' \
         <<<"$posted_bodies")
     done
-    for posted_comment_file in "$GH_SHIM_STATE_DIR"/baseline-"$number"-*.md; do
-      [[ -s "$posted_comment_file" ]] || continue
-      posted_comments=$(jq -c --rawfile body "$posted_comment_file" '. + [$body]' \
-        <<<"$posted_comments")
+    for baseline_file in "$GH_SHIM_STATE_DIR"/baseline-"$number"-*.md; do
+      [[ -s "$baseline_file" ]] || continue
+      baseline_bodies=$(jq -c --rawfile body "$baseline_file" '. + [$body]' \
+        <<<"$baseline_bodies")
     done
   fi
 
   jq \
     --argjson bodies "$posted_bodies" \
-    --argjson baseline_bodies "$posted_comments" '
+    --argjson baseline_bodies "$baseline_bodies" '
       .reviews += [
         $bodies
         | to_entries[]
@@ -74,19 +74,18 @@ append_posted_review() {
             commit: {oid: .headRefOid}
           }
       ]
-      | .comments += [
+      | .reviews += [
           $baseline_bodies
           | to_entries[]
           | {
-              id: ("PRC_baseline_" + (.key | tostring)),
+              id: ("PRR_baseline_" + (.key | tostring)),
               author: {login: "sentry-bot"},
-              createdAt: (
+              submittedAt: (
                 "2026-07-29T12:30:0" + (.key | tostring) + "Z"
               ),
-              updatedAt: (
-                "2026-07-29T12:30:0" + (.key | tostring) + "Z"
-              ),
-              body: .value
+              state: "COMMENTED",
+              body: .value,
+              commit: {oid: .headRefOid}
             }
         ]
     ' "$fixture"
@@ -97,35 +96,101 @@ case "${1:-} ${2:-}" in
     printf 'sentry-bot\n'
     ;;
   "api graphql")
-    if [[ -z "${GH_REVIEW_THREAD_RESOLVED:-}" ]]; then
-      review_threads='[]'
-    else
-      review_threads=$(jq -cn \
-        --argjson resolved "$GH_REVIEW_THREAD_RESOLVED" '
+    if [[ "$*" == *"statusCheckRollup"* ]]; then
+      queried_head=$(jq -r '.headRefOid' "$GH_FIXTURE")
+      for argument in "$@"; do
+        if [[ "$argument" == head=* ]]; then
+          queried_head=${argument#head=}
+        fi
+      done
+      check_contexts=$(jq -c '
+        [
+          (.statusCheckRollup // [])[]
+          | {
+              __typename: "CheckRun",
+              name,
+              status,
+              conclusion,
+              startedAt: (.startedAt // null),
+              completedAt: (.completedAt // null),
+              detailsUrl: (.detailsUrl // null),
+              checkSuite: {
+                id: (
+                  .checkSuiteId
+                  // ("CS:" + (.workflowName // "") + ":" + .name)
+                ),
+                app: {
+                  id: (.appId // "APP:github-actions"),
+                  slug: (.appSlug // "github-actions")
+                },
+                workflowRun: (
+                  if ((.workflowName // "") | length) > 0
+                  then {
+                    workflow: {
+                      id: (.workflowId // ("WF:" + .workflowName)),
+                      name: .workflowName
+                    }
+                  }
+                  else null
+                  end
+                )
+              }
+            }
+        ]
+      ' "$GH_FIXTURE")
+      jq -cn \
+        --arg head "$queried_head" \
+        --argjson check_contexts "$check_contexts" '
           [{
-            id: "PRRT_kwDOexample",
-            isResolved: $resolved,
-            isOutdated: false
+            data: {
+              repository: {
+                object: {
+                  oid: $head,
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: $check_contexts,
+                      pageInfo: {
+                        hasNextPage: false,
+                        endCursor: null
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }]
-        ')
-    fi
-    jq -cn --argjson review_threads "$review_threads" '
-      [{
-        data: {
-          repository: {
-            pullRequest: {
-              reviewThreads: {
-                nodes: $review_threads,
-                pageInfo: {
-                  hasNextPage: false,
-                  endCursor: null
+        '
+    else
+      if [[ -z "${GH_REVIEW_THREAD_RESOLVED:-}" ]]; then
+        review_threads='[]'
+      else
+        review_threads=$(jq -cn \
+          --argjson resolved "$GH_REVIEW_THREAD_RESOLVED" '
+            [{
+              id: "PRRT_kwDOexample",
+              isResolved: $resolved,
+              isOutdated: false
+            }]
+          ')
+      fi
+      jq -cn --argjson review_threads "$review_threads" '
+        [{
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: $review_threads,
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: null
+                  }
                 }
               }
             }
           }
-        }
-      }]
-    '
+        }]
+      '
+    fi
     ;;
   "search prs")
     search_query=${3:-}
@@ -209,56 +274,54 @@ case "${1:-} ${2:-}" in
     number=${3:?missing PR number}
     shift 3
     body_file=""
+    comment_mode=0
     while (($#)); do
       if [[ "$1" == "--body-file" ]]; then
         body_file=$2
         shift 2
+      elif [[ "$1" == "--comment" ]]; then
+        comment_mode=1
+        shift
       else
         shift
       fi
     done
     [[ -n "$body_file" ]] || {
       printf 'missing --body-file\n' >&2
+      exit 2
+    }
+    ((comment_mode == 1)) || {
+      printf 'missing --comment\n' >&2
       exit 2
     }
     if [[ "${GH_REVIEW_FAIL:-0}" == 1 ]]; then
       printf 'simulated review failure\n' >&2
       exit 1
     fi
-    cp -- "$body_file" "$GH_SHIM_STATE_DIR/posted-$number.md"
-    count_file="$GH_SHIM_STATE_DIR/review-count"
-    count=0
-    [[ -f "$count_file" ]] && count=$(<"$count_file")
-    ((count += 1))
-    printf '%s\n' "$count" >"$count_file"
-    printf -v history_file '%s/posted-%s-%06d.md' \
-      "$GH_SHIM_STATE_DIR" "$number" "$count"
-    cp -- "$body_file" "$history_file"
+    if grep -Fq -- ' kind=baseline ' "$body_file"; then
+      count_file="$GH_SHIM_STATE_DIR/baseline-count"
+      count=0
+      [[ -f "$count_file" ]] && count=$(<"$count_file")
+      ((count += 1))
+      printf '%s\n' "$count" >"$count_file"
+      printf -v history_file '%s/baseline-%s-%06d.md' \
+        "$GH_SHIM_STATE_DIR" "$number" "$count"
+      cp -- "$body_file" "$history_file"
+    else
+      cp -- "$body_file" "$GH_SHIM_STATE_DIR/posted-$number.md"
+      count_file="$GH_SHIM_STATE_DIR/review-count"
+      count=0
+      [[ -f "$count_file" ]] && count=$(<"$count_file")
+      ((count += 1))
+      printf '%s\n' "$count" >"$count_file"
+      printf -v history_file '%s/posted-%s-%06d.md' \
+        "$GH_SHIM_STATE_DIR" "$number" "$count"
+      cp -- "$body_file" "$history_file"
+    fi
     ;;
   "pr comment")
-    number=${3:?missing PR number}
-    shift 3
-    body_file=""
-    while (($#)); do
-      if [[ "$1" == "--body-file" ]]; then
-        body_file=$2
-        shift 2
-      else
-        shift
-      fi
-    done
-    [[ -n "$body_file" ]] || {
-      printf 'missing --body-file\n' >&2
-      exit 2
-    }
-    count_file="$GH_SHIM_STATE_DIR/baseline-count"
-    count=0
-    [[ -f "$count_file" ]] && count=$(<"$count_file")
-    ((count += 1))
-    printf '%s\n' "$count" >"$count_file"
-    printf -v history_file '%s/baseline-%s-%06d.md' \
-      "$GH_SHIM_STATE_DIR" "$number" "$count"
-    cp -- "$body_file" "$history_file"
+    printf 'issue-comment publication is forbidden\n' >&2
+    exit 2
     ;;
   "api --paginate")
     printf '[[]]\n'

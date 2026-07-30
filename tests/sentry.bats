@@ -222,6 +222,21 @@ setup() {
   [[ "$output" == *"ci-failure"* ]]
 }
 
+@test "baseline markers use only the comment-only review channel" {
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(baseline_count)" -eq 1 ]
+  grep -q -- '^pr review .*--comment .*--body-file ' \
+    "$GH_SHIM_STATE_DIR/gh.log"
+  ! grep -q -- '^pr comment ' "$GH_SHIM_STATE_DIR/gh.log"
+}
+
 @test "CI recovery after state loss does not schedule a new review" {
   export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
   invoke_sentry
@@ -490,6 +505,51 @@ setup() {
   [[ "$output" == *"no meaningful update"* ]]
 
   export GH_FIXTURE="$replacement_failure"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"ci-failure"* ]]
+}
+
+@test "same-named checks from distinct producers remain independent" {
+  one_producer="$BATS_TEST_TMPDIR/one-producer.json"
+  two_producers="$BATS_TEST_TMPDIR/two-producers.json"
+  jq '
+    .statusCheckRollup = [
+      {
+        name: "test",
+        workflowName: "CI",
+        workflowId: "WF_first",
+        checkSuiteId: "CS_first",
+        appId: "APP_actions",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/octo/example/actions/runs/first"
+      }
+    ]
+  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" >"$one_producer"
+  jq '
+    .statusCheckRollup += [
+      {
+        name: "test",
+        workflowName: "CI",
+        workflowId: "WF_second",
+        checkSuiteId: "CS_second",
+        appId: "APP_actions",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/octo/example/actions/runs/second"
+      }
+    ]
+  ' "$one_producer" >"$two_producers"
+
+  export GH_FIXTURE="$one_producer"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+
+  export GH_FIXTURE="$two_producers"
   invoke_sentry
 
   [ "$status" -eq 0 ]
