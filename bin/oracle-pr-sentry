@@ -1514,7 +1514,7 @@ snapshot_facts() {
   SNAPSHOT_CI_FAILURE_COUNT=$(jq 'length' <<<"$SNAPSHOT_CI_JSON") || return 1
   SNAPSHOT_CI_IDENTITIES_JSON=$(jq -cS '
     def producer_key:
-      .producer
+      (.producer | del(.check_suite_id))
       | to_entries
       | sort_by(.key)
       | from_entries
@@ -1593,6 +1593,12 @@ snapshot_facts() {
   SNAPSHOT_LATEST_EVENT_CI_IDENTITIES_JSON=$(jq -cS '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .ci_failures // []
+    | map(
+        .workflow |= (
+          . as $workflow
+          | try (fromjson | del(.check_suite_id) | tojson) catch $workflow
+        )
+      )
   ' "$snapshot_file") || return 1
   SNAPSHOT_LATEST_EVENT_CONTEXT_FINGERPRINT=$(jq -r '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
@@ -1940,7 +1946,7 @@ process_candidate() {
             workflow: (
               if has("producer")
               then (
-                .producer
+                (.producer | del(.check_suite_id))
                 | to_entries
                 | sort_by(.key)
                 | from_entries

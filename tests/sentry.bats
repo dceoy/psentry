@@ -608,6 +608,45 @@ setup() {
   [[ "$output" == *"no meaningful update"* ]]
 }
 
+@test "a rerun's new check suite id does not change the logical CI failure identity" {
+  suite_fixture="$BATS_TEST_TMPDIR/suite-rerun.json"
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  jq '
+    .statusCheckRollup[0].checkSuiteId = "CS_rerun"
+  ' "$GH_FIXTURE" >"$suite_fixture"
+  export GH_FIXTURE="$suite_fixture"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
+@test "a marker published before the check suite id fix does not misclassify an unchanged failure" {
+  legacy_sentry="$BATS_TEST_TMPDIR/oracle-pr-sentry-legacy"
+  sed -e 's/| del(\.check_suite_id)//g' "$SENTRY_UNDER_TEST" >"$legacy_sentry"
+  chmod +x -- "$legacy_sentry"
+  ! grep -q 'del(\.check_suite_id)' "$legacy_sentry"
+  ! diff -q -- "$SENTRY_UNDER_TEST" "$legacy_sentry" >/dev/null
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  run "$legacy_sentry"
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
 @test "new external discussion activity schedules a new review" {
   invoke_sentry
   [ "$status" -eq 0 ]
