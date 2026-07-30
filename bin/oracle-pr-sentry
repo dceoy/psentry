@@ -379,6 +379,7 @@ load_oracle_extra_args() {
         --browser-url | --browser-url=* | --browser-model-strategy | \
         --browser-model-strategy=* | --browser-tab | --browser-tab=* | \
         --browser-attach-running | --browser-attach-running=* | \
+        --browser-keep-browser | --browser-keep-browser=* | \
         --remote-host | --remote-host=* | --remote-token | --remote-token=* | \
         --remote-chrome | --remote-chrome=* | --status | --status=* | \
         --session | --session=* | --exec-session | --exec-session=* | \

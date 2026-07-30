@@ -821,6 +821,7 @@ setup() {
     --browser-model-strategy --browser-model-strategy=current \
     --browser-tab --browser-tab=current \
     --browser-attach-running --browser-attach-running=true \
+    --browser-keep-browser --browser-keep-browser=true \
     --remote-host --remote-host=reviewer.example:9473 \
     --remote-token --remote-token=example \
     --remote-chrome --remote-chrome=reviewer.example:9222 \
