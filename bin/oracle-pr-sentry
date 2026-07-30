@@ -33,7 +33,7 @@ die() {
 }
 
 usage() {
-  cat <<'EOF'
+  cat << 'EOF'
 Usage:
   oracle-pr-sentry [--dry-run]
   oracle-pr-sentry install
@@ -62,13 +62,13 @@ EOF
 
 require_command() {
   local command_name=$1
-  command -v -- "$command_name" >/dev/null 2>&1 ||
-    die "required command not found: $command_name"
+  command -v -- "$command_name" > /dev/null 2>&1 \
+    || die "required command not found: $command_name"
 }
 
 require_unprivileged_user() {
-  [[ "$(id -u)" != 0 ]] ||
-    die "$PROGRAM_NAME must not run as root"
+  [[ "$(id -u)" != 0 ]] \
+    || die "$PROGRAM_NAME must not run as root"
 }
 
 validate_trusted_directory() {
@@ -76,23 +76,23 @@ validate_trusted_directory() {
   local owner_policy=$2
   local owner mode current_uid
 
-  [[ -d "$path" && ! -L "$path" ]] ||
-    die "trusted file directory must be a non-symlink directory: $path"
+  [[ -d "$path" && ! -L "$path" ]] \
+    || die "trusted file directory must be a non-symlink directory: $path"
 
-  owner=$(stat -c '%u' -- "$path") ||
-    die "cannot inspect directory owner: $path"
-  mode=$(stat -c '%a' -- "$path") ||
-    die "cannot inspect directory permissions: $path"
+  owner=$(stat -c '%u' -- "$path") \
+    || die "cannot inspect directory owner: $path"
+  mode=$(stat -c '%a' -- "$path") \
+    || die "cannot inspect directory permissions: $path"
   current_uid=$(id -u)
 
   case "$owner_policy" in
     user)
-      [[ "$owner" == "$current_uid" ]] ||
-        die "trusted file directory must be owned by the current user: $path"
+      [[ "$owner" == "$current_uid" ]] \
+        || die "trusted file directory must be owned by the current user: $path"
       ;;
     user-or-root)
-      [[ "$owner" == "$current_uid" || "$owner" == 0 ]] ||
-        die "trusted file directory must be owned by the current user or root: $path"
+      [[ "$owner" == "$current_uid" || "$owner" == 0 ]] \
+        || die "trusted file directory must be owned by the current user or root: $path"
       ;;
     *)
       die "internal error: unknown owner policy"
@@ -110,23 +110,23 @@ validate_trusted_file() {
   local owner mode current_uid
 
   validate_trusted_directory "$(dirname -- "$path")" "$owner_policy"
-  [[ -f "$path" && ! -L "$path" ]] ||
-    die "trusted file must be a regular, non-symlink file: $path"
+  [[ -f "$path" && ! -L "$path" ]] \
+    || die "trusted file must be a regular, non-symlink file: $path"
 
-  owner=$(stat -c '%u' -- "$path") ||
-    die "cannot inspect file owner: $path"
-  mode=$(stat -c '%a' -- "$path") ||
-    die "cannot inspect file permissions: $path"
+  owner=$(stat -c '%u' -- "$path") \
+    || die "cannot inspect file owner: $path"
+  mode=$(stat -c '%a' -- "$path") \
+    || die "cannot inspect file permissions: $path"
   current_uid=$(id -u)
 
   case "$owner_policy" in
     user)
-      [[ "$owner" == "$current_uid" ]] ||
-        die "trusted file must be owned by the current user: $path"
+      [[ "$owner" == "$current_uid" ]] \
+        || die "trusted file must be owned by the current user: $path"
       ;;
     user-or-root)
-      [[ "$owner" == "$current_uid" || "$owner" == 0 ]] ||
-        die "trusted file must be owned by the current user or root: $path"
+      [[ "$owner" == "$current_uid" || "$owner" == 0 ]] \
+        || die "trusted file must be owned by the current user or root: $path"
       ;;
     *)
       die "internal error: unknown owner policy"
@@ -146,8 +146,8 @@ ensure_private_directory() {
   [[ ! -L "$path" ]] || die "directory must not be a symlink: $path"
   install -d -m 700 -- "$path"
   owner=$(stat -c '%u' -- "$path")
-  [[ "$owner" == "$(id -u)" ]] ||
-    die "directory must be owned by the current user: $path"
+  [[ "$owner" == "$(id -u)" ]] \
+    || die "directory must be owned by the current user: $path"
   chmod 700 -- "$path"
 }
 
@@ -163,8 +163,8 @@ install_project() {
   require_command install
   require_command systemctl
   [[ -f "$executable_source" && -f "$prompt_source" &&
-    -f "$service_source" && -f "$timer_source" ]] ||
-    die "install must be run from a complete project checkout"
+    -f "$service_source" && -f "$timer_source" ]] \
+    || die "install must be run from a complete project checkout"
 
   install -D -m 755 -- "$executable_source" "$executable_target"
   install -D -m 644 -- "$prompt_source" "$data_target"
@@ -195,13 +195,13 @@ uninstall_project() {
   require_command rmdir
   require_command systemctl
 
-  systemctl --user disable --now "$PROGRAM_NAME.timer" >/dev/null 2>&1 || true
+  systemctl --user disable --now "$PROGRAM_NAME.timer" > /dev/null 2>&1 || true
   rm -f -- \
     "${HOME}/.local/bin/$PROGRAM_NAME" \
     "${HOME}/.local/share/$PROGRAM_NAME/review-prompt.md" \
     "$unit_directory/$PROGRAM_NAME.service" \
     "$unit_directory/$PROGRAM_NAME.timer"
-  rmdir -- "${HOME}/.local/share/$PROGRAM_NAME" 2>/dev/null || true
+  rmdir -- "${HOME}/.local/share/$PROGRAM_NAME" 2> /dev/null || true
   systemctl --user daemon-reload
   log INFO "removed installed project files; configuration and state were preserved"
 }
@@ -212,8 +212,8 @@ parse_arguments() {
   while (($#)); do
     case "$1" in
       --dry-run)
-        [[ "$COMMAND" == "run" ]] ||
-          die "--dry-run cannot be combined with a lifecycle command"
+        [[ "$COMMAND" == "run" ]] \
+          || die "--dry-run cannot be combined with a lifecycle command"
         DRY_RUN_CLI=1
         ;;
       --help | -h)
@@ -225,8 +225,8 @@ parse_arguments() {
         exit 0
         ;;
       install | enable | disable | uninstall)
-        [[ "$COMMAND" == "run" && -z "$DRY_RUN_CLI" ]] ||
-          die "only one lifecycle command may be specified"
+        [[ "$COMMAND" == "run" && -z "$DRY_RUN_CLI" ]] \
+          || die "only one lifecycle command may be specified"
         COMMAND=$1
         ;;
       *)
@@ -299,8 +299,8 @@ source_configuration() {
 validate_positive_integer() {
   local name=$1
   local value=$2
-  [[ "$value" =~ ^[1-9][0-9]*$ ]] ||
-    die "$name must be a positive integer"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] \
+    || die "$name must be a positive integer"
 }
 
 validate_configuration() {
@@ -309,21 +309,21 @@ validate_configuration() {
   validate_positive_integer ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES "$ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES"
   validate_positive_integer ORACLE_PR_SENTRY_RETENTION_DAYS "$ORACLE_PR_SENTRY_RETENTION_DAYS"
 
-  ((ORACLE_PR_SENTRY_PR_SEARCH_LIMIT <= 1000)) ||
-    die "ORACLE_PR_SENTRY_PR_SEARCH_LIMIT must not exceed 1000"
-  ((ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES <= 65000)) ||
-    die "ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES must not exceed 65000"
+  ((ORACLE_PR_SENTRY_PR_SEARCH_LIMIT <= 1000)) \
+    || die "ORACLE_PR_SENTRY_PR_SEARCH_LIMIT must not exceed 1000"
+  ((ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES <= 65000)) \
+    || die "ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES must not exceed 65000"
 
-  [[ "$ORACLE_PR_SENTRY_DRY_RUN" == 0 || "$ORACLE_PR_SENTRY_DRY_RUN" == 1 ]] ||
-    die "ORACLE_PR_SENTRY_DRY_RUN must be 0 or 1"
+  [[ "$ORACLE_PR_SENTRY_DRY_RUN" == 0 || "$ORACLE_PR_SENTRY_DRY_RUN" == 1 ]] \
+    || die "ORACLE_PR_SENTRY_DRY_RUN must be 0 or 1"
   [[ "$ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN" == 0 ||
-    "$ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN" == 1 ]] ||
-    die "ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN must be 0 or 1"
-  [[ "$ORACLE_PR_SENTRY_IDENTITY" =~ ^[A-Za-z0-9._-]+$ ]] ||
-    die "ORACLE_PR_SENTRY_IDENTITY contains unsupported characters"
+    "$ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN" == 1 ]] \
+    || die "ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN must be 0 or 1"
+  [[ "$ORACLE_PR_SENTRY_IDENTITY" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || die "ORACLE_PR_SENTRY_IDENTITY contains unsupported characters"
 
-  [[ -r "$ORACLE_PR_SENTRY_PROMPT_PATH" ]] ||
-    die "review prompt is not readable: $ORACLE_PR_SENTRY_PROMPT_PATH"
+  [[ -r "$ORACLE_PR_SENTRY_PROMPT_PATH" ]] \
+    || die "review prompt is not readable: $ORACLE_PR_SENTRY_PROMPT_PATH"
   validate_trusted_file "$ORACLE_PR_SENTRY_PROMPT_PATH" user-or-root
 
   if [[ -n "$ORACLE_PR_SENTRY_ORACLE_ARGS_FILE" ]]; then
@@ -356,8 +356,8 @@ load_oracle_extra_args() {
     argument=${argument%$'\r'}
     [[ -n "$argument" && "$argument" != \#* ]] || continue
     if [[ "$argument" != -* ]]; then
-      ((previous_expects_value)) ||
-        die "Oracle argument file accepts option values only, not positional tokens: $argument"
+      ((previous_expects_value)) \
+        || die "Oracle argument file accepts option values only, not positional tokens: $argument"
       previous_expects_value=0
       ORACLE_EXTRA_ARGS+=("$argument")
       continue
@@ -407,7 +407,7 @@ load_oracle_extra_args() {
       pending_flag=$argument
     fi
     ORACLE_EXTRA_ARGS+=("$argument")
-  done <"$ORACLE_PR_SENTRY_ORACLE_ARGS_FILE"
+  done < "$ORACLE_PR_SENTRY_ORACLE_ARGS_FILE"
 
   if ((previous_expects_value)); then
     die "Oracle argument file ends with an option awaiting its value: $pending_flag"
@@ -422,14 +422,14 @@ prepare_runtime() {
     while [[ "$dry_run_root" != "/" && "$dry_run_root" == */ ]]; do
       dry_run_root=${dry_run_root%/}
     done
-    [[ "$dry_run_root" == /* && -d "$dry_run_root" ]] ||
-      die "temporary directory root must be an existing absolute directory: $dry_run_root"
+    [[ "$dry_run_root" == /* && -d "$dry_run_root" ]] \
+      || die "temporary directory root must be an existing absolute directory: $dry_run_root"
     if ! RUN_TMP=$(mktemp -d -- "$dry_run_root/$PROGRAM_NAME-dry-run.XXXXXXXX"); then
       die "failed to create isolated dry-run workspace"
     fi
     [[ "$RUN_TMP" == "$dry_run_root"/"$PROGRAM_NAME"-dry-run.* &&
-      -d "$RUN_TMP" && ! -L "$RUN_TMP" ]] ||
-      die "dry-run workspace was created outside the temporary directory root"
+      -d "$RUN_TMP" && ! -L "$RUN_TMP" ]] \
+      || die "dry-run workspace was created outside the temporary directory root"
     RUN_TMP_OWNED=1
     return 0
   fi
@@ -442,15 +442,15 @@ prepare_runtime() {
   ensure_private_directory "$ORACLE_PR_SENTRY_RUNTIME_DIR"
   ensure_private_directory "$lock_directory"
 
-  exec {LOCK_FD}>"$ORACLE_PR_SENTRY_LOCK_FILE"
+  exec {LOCK_FD}> "$ORACLE_PR_SENTRY_LOCK_FILE"
   if ! flock -n "$LOCK_FD"; then
     log INFO "another sentry invocation holds the global lock; exiting"
     exit 0
   fi
 
   RUN_TMP=$(mktemp -d -- "$ORACLE_PR_SENTRY_RUNTIME_DIR/run.XXXXXXXX")
-  [[ "$RUN_TMP" == "$ORACLE_PR_SENTRY_RUNTIME_DIR"/run.* ]] ||
-    die "temporary directory was created outside the runtime directory"
+  [[ "$RUN_TMP" == "$ORACLE_PR_SENTRY_RUNTIME_DIR"/run.* ]] \
+    || die "temporary directory was created outside the runtime directory"
   RUN_TMP_OWNED=1
 }
 
@@ -466,10 +466,10 @@ load_state() {
     return 0
   fi
 
-  [[ -f "$ORACLE_PR_SENTRY_STATE_FILE" && ! -L "$ORACLE_PR_SENTRY_STATE_FILE" ]] ||
-    die "state file must be a regular, non-symlink file: $ORACLE_PR_SENTRY_STATE_FILE"
-  [[ "$(stat -c '%u' -- "$ORACLE_PR_SENTRY_STATE_FILE")" == "$(id -u)" ]] ||
-    die "state file must be owned by the current user"
+  [[ -f "$ORACLE_PR_SENTRY_STATE_FILE" && ! -L "$ORACLE_PR_SENTRY_STATE_FILE" ]] \
+    || die "state file must be a regular, non-symlink file: $ORACLE_PR_SENTRY_STATE_FILE"
+  [[ "$(stat -c '%u' -- "$ORACLE_PR_SENTRY_STATE_FILE")" == "$(id -u)" ]] \
+    || die "state file must be owned by the current user"
   if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
     chmod 600 -- "$ORACLE_PR_SENTRY_STATE_FILE"
   fi
@@ -564,7 +564,7 @@ load_state() {
       )
       and ((has("reviewed") and has("comparison")) | not)
     )
-  ' "$ORACLE_PR_SENTRY_STATE_FILE" >/dev/null; then
+  ' "$ORACLE_PR_SENTRY_STATE_FILE" > /dev/null; then
     die "malformed or unsupported state file: $ORACLE_PR_SENTRY_STATE_FILE"
   fi
   if ! STATE_JSON=$(jq -cS . "$ORACLE_PR_SENTRY_STATE_FILE"); then
@@ -579,7 +579,7 @@ persist_state() {
   state_directory=$(dirname -- "$ORACLE_PR_SENTRY_STATE_FILE")
   temporary_state=$(mktemp -- "$state_directory/.state.XXXXXXXX")
 
-  if ! printf '%s\n' "$STATE_JSON" | jq -S . >"$temporary_state"; then
+  if ! printf '%s\n' "$STATE_JSON" | jq -S . > "$temporary_state"; then
     rm -f -- "$temporary_state"
     log ERROR "failed to serialize state"
     return 1
@@ -596,16 +596,16 @@ checkpoint_candidate_cursor() {
   local candidate=$1
   local key repository number updated_state
 
-  repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") ||
-    return 1
-  number=$(jq -r '.number // 0' <<<"$candidate") || return 1
+  repository=$(jq -r '.repository.nameWithOwner // ""' <<< "$candidate") \
+    || return 1
+  number=$(jq -r '.number // 0' <<< "$candidate") || return 1
   [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
-    "$number" =~ ^[1-9][0-9]*$ ]] ||
-    return 1
+    "$number" =~ ^[1-9][0-9]*$ ]] \
+    || return 1
   key="$repository#$number"
 
   if ! updated_state=$(jq -cS --arg key "$key" \
-    '.candidate_cursor = $key' <<<"$STATE_JSON"); then
+    '.candidate_cursor = $key' <<< "$STATE_JSON"); then
     log ERROR "failed to update candidate cursor for $key"
     return 1
   fi
@@ -642,7 +642,7 @@ state_observe() {
           last_seen_at: $seen_at
         }
       })
-    ' <<<"$STATE_JSON"); then
+    ' <<< "$STATE_JSON"); then
     log ERROR "failed to update observed state for $key"
     return 1
   fi
@@ -687,7 +687,7 @@ state_mark_reviewed() {
         publication_status: $publication_status
       }
       | del(.prs[$key].comparison)
-    ' <<<"$STATE_JSON"); then
+    ' <<< "$STATE_JSON"); then
     log ERROR "failed to update reviewed state for $key"
     return 1
   fi
@@ -728,7 +728,7 @@ state_mark_comparison() {
         marker: $marker,
         source: "baseline"
       }
-    ' <<<"$STATE_JSON"); then
+    ' <<< "$STATE_JSON"); then
     log ERROR "failed to update comparison state for $key"
     return 1
   fi
@@ -749,7 +749,7 @@ prune_state() {
         | ($seen == null or $seen >= $cutoff)
       )
     )
-  ' <<<"$STATE_JSON"); then
+  ' <<< "$STATE_JSON"); then
     log ERROR "failed to prune state"
     return 1
   fi
@@ -773,22 +773,22 @@ discover_candidates() {
     --json "number,repository,url,isDraft,updatedAt"
   )
 
-  if ! gh search prs "draft:false" "${common_args[@]}" >"$ready_file"; then
+  if ! gh search prs "draft:false" "${common_args[@]}" > "$ready_file"; then
     log ERROR "GitHub ready-PR discovery failed"
     return 1
   fi
-  if ! gh search prs "draft:true" "${common_args[@]}" >"$drafts_file"; then
+  if ! gh search prs "draft:true" "${common_args[@]}" > "$drafts_file"; then
     log ERROR "GitHub draft observation failed"
     return 1
   fi
 
-  if ! jq -e 'type == "array"' "$ready_file" "$drafts_file" >/dev/null; then
+  if ! jq -e 'type == "array"' "$ready_file" "$drafts_file" > /dev/null; then
     log ERROR "GitHub discovery returned invalid JSON"
     return 1
   fi
 
-  candidate_cursor=$(jq -r '.candidate_cursor // ""' <<<"$STATE_JSON") ||
-    return 1
+  candidate_cursor=$(jq -r '.candidate_cursor // ""' <<< "$STATE_JSON") \
+    || return 1
   if ! jq -sS --arg candidate_cursor "$candidate_cursor" '
     ((
       [.[0][] | . + {_search_eligible: true}]
@@ -811,7 +811,7 @@ discover_candidates() {
         + $candidates[:($cursor_index + 1)]
       )
       end
-  ' "$ready_file" "$drafts_file" >"$candidates_file"; then
+  ' "$ready_file" "$drafts_file" > "$candidates_file"; then
     log ERROR "failed to normalize GitHub discovery results"
     return 1
   fi
@@ -838,13 +838,13 @@ collect_snapshot() {
 
   if ! gh pr view "$number" --repo "$repository" --json \
     number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,reviews,comments,files \
-    >"$raw_pr"; then
+    > "$raw_pr"; then
     log ERROR "failed to collect PR metadata for $repository#$number"
     return 1
   fi
 
-  if ! head_sha=$(jq -r '.headRefOid // ""' "$raw_pr") ||
-    [[ ! "$head_sha" =~ ^[0-9A-Fa-f]{40,64}$ ]]; then
+  if ! head_sha=$(jq -r '.headRefOid // ""' "$raw_pr") \
+    || [[ ! "$head_sha" =~ ^[0-9A-Fa-f]{40,64}$ ]]; then
     log ERROR "GitHub returned an invalid head SHA for $repository#$number"
     return 1
   fi
@@ -910,7 +910,7 @@ collect_snapshot() {
     -f query="$check_contexts_query" \
     -F owner="$repository_owner" \
     -F name="$repository_name" \
-    -f head="$head_sha" >"$check_pages"; then
+    -f head="$head_sha" > "$check_pages"; then
     log ERROR "failed to collect CI check identities for $repository#$number"
     return 1
   fi
@@ -957,13 +957,13 @@ collect_snapshot() {
         )
       )
     )
-  ' "$check_pages" >/dev/null; then
+  ' "$check_pages" > /dev/null; then
     log ERROR "GitHub returned invalid CI check identities for $repository#$number"
     return 1
   fi
 
   if ! gh api --paginate --slurp \
-    "repos/$repository/pulls/$number/comments?per_page=100" >"$review_pages"; then
+    "repos/$repository/pulls/$number/comments?per_page=100" > "$review_pages"; then
     log ERROR "failed to collect inline review discussion for $repository#$number"
     return 1
   fi
@@ -997,7 +997,7 @@ collect_snapshot() {
     -f query="$review_threads_query" \
     -F owner="$repository_owner" \
     -F name="$repository_name" \
-    -F number="$number" >"$review_thread_pages"; then
+    -F number="$number" > "$review_thread_pages"; then
     log ERROR "failed to collect review-thread state for $repository#$number"
     return 1
   fi
@@ -1014,12 +1014,12 @@ collect_snapshot() {
         and (.isOutdated | type) == "boolean"
       )
     )
-  ' "$review_thread_pages" >/dev/null; then
+  ' "$review_thread_pages" > /dev/null; then
     log ERROR "GitHub returned invalid review-thread state for $repository#$number"
     return 1
   fi
 
-  if ! gh pr diff "$number" --repo "$repository" >"$diff_file"; then
+  if ! gh pr diff "$number" --repo "$repository" > "$diff_file"; then
     log ERROR "failed to collect PR diff for $repository#$number"
     return 1
   fi
@@ -1302,7 +1302,7 @@ collect_snapshot() {
             }
           ] | sort_by(.path)
         }
-    ' "$raw_pr" >"$snapshot_file"; then
+    ' "$raw_pr" > "$snapshot_file"; then
     log ERROR "failed to normalize snapshot for $repository#$number"
     return 1
   fi
@@ -1326,7 +1326,7 @@ collect_snapshot() {
     and (.review_threads | type == "array")
     and (.publications | type == "array")
     and (.files | type == "array")
-  ' "$snapshot_file" >/dev/null; then
+  ' "$snapshot_file" > /dev/null; then
     log ERROR "GitHub returned an invalid snapshot for $repository#$number"
     return 1
   fi
@@ -1364,8 +1364,8 @@ snapshot_facts() {
   SNAPSHOT_BASE_REF=$(jq -r '.base.ref' "$snapshot_file") || return 1
   SNAPSHOT_HEAD=$(jq -r '.head.sha' "$snapshot_file") || return 1
   SNAPSHOT_DIFF_DIGEST=$(jq -r '.diff.sha256' "$snapshot_file") || return 1
-  SNAPSHOT_REQUIREMENTS_JSON=$(jq -cS '{title, body}' "$snapshot_file") ||
-    return 1
+  SNAPSHOT_REQUIREMENTS_JSON=$(jq -cS '{title, body}' "$snapshot_file") \
+    || return 1
   SNAPSHOT_DRAFT=$(jq -r '.draft' "$snapshot_file") || return 1
   SNAPSHOT_STATE=$(jq -r '.state' "$snapshot_file") || return 1
   SNAPSHOT_CI_JSON=$(jq -cS '
@@ -1398,7 +1398,7 @@ snapshot_facts() {
       | tojson;
     map({workflow: producer_key, name})
     | unique_by([.workflow, .name])
-  ' <<<"$SNAPSHOT_CI_JSON") || return 1
+  ' <<< "$SNAPSHOT_CI_JSON") || return 1
   SNAPSHOT_CI_IDENTITIES_B64=$(jq -rn \
     --arg value "$SNAPSHOT_CI_IDENTITIES_JSON" \
     '$value | @base64') || return 1
@@ -1483,7 +1483,7 @@ snapshot_has_publication() {
         and .fingerprint == $fingerprint
         and .head_sha == $head_sha
       )
-    ' "$snapshot_file" >/dev/null
+    ' "$snapshot_file" > /dev/null
 }
 
 latest_baseline_matches_snapshot() {
@@ -1524,8 +1524,8 @@ publish_baseline() {
     log ERROR "failed to create fresh baseline-snapshot directory"
     return 1
   fi
-  if ! collect_snapshot "$repository" "$number" "$fresh_directory" ||
-    ! snapshot_facts "$SNAPSHOT_FILE"; then
+  if ! collect_snapshot "$repository" "$number" "$fresh_directory" \
+    || ! snapshot_facts "$SNAPSHOT_FILE"; then
     return 1
   fi
 
@@ -1548,8 +1548,8 @@ publish_baseline() {
   fi
 
   baseline_marker="<!-- $PROGRAM_NAME:v5 identity=$ORACLE_PR_SENTRY_IDENTITY kind=baseline input=$initial_input_fingerprint context=$initial_context_fingerprint head=$initial_head event=$initial_event_sequence draft=$initial_draft failures=$initial_ci_identities_b64 external=$initial_external_digest -->"
-  if ! printf '%s\n' "$baseline_marker" >"$marker_file" ||
-    ! gh pr review "$number" --repo "$repository" --comment \
+  if ! printf '%s\n' "$baseline_marker" > "$marker_file" \
+    || ! gh pr review "$number" --repo "$repository" --comment \
       --body-file "$marker_file"; then
     log ERROR "failed to publish baseline marker for $repository#$number"
     return 1
@@ -1624,24 +1624,24 @@ run_oracle_review() {
         .external_activity[] | select(.kind == "review_comment")
       ]
     | del(.publications)
-  ' "$snapshot_file" >"$metadata_file"; then
+  ' "$snapshot_file" > "$metadata_file"; then
     log ERROR "failed to build Oracle metadata for $repository#$number"
     return 1
   fi
   expected_diff_digest=$(jq -r '.diff.sha256' "$snapshot_file") || return 1
-  if [[ ! -f "$diff_file" ]] ||
-    ! actual_diff_digest=$(sha256sum "$diff_file" | awk '{print $1}') ||
-    [[ "$actual_diff_digest" != "$expected_diff_digest" ]]; then
+  if [[ ! -f "$diff_file" ]] \
+    || ! actual_diff_digest=$(sha256sum "$diff_file" | awk '{print $1}') \
+    || [[ "$actual_diff_digest" != "$expected_diff_digest" ]]; then
     log ERROR "collected PR diff no longer matches the snapshot for $repository#$number"
     return 1
   fi
 
-  prompt=$(<"$ORACLE_PR_SENTRY_PROMPT_PATH")
+  prompt=$(< "$ORACLE_PR_SENTRY_PROMPT_PATH")
   log INFO "invoking Oracle for $repository#$number at $SNAPSHOT_HEAD"
   if (
-    cd -- "$work_directory" &&
-      unset ORACLE_BROWSER_PROFILE_DIR &&
-      ORACLE_HOME_DIR="$ORACLE_PR_SENTRY_ORACLE_HOME_DIR" \
+    cd -- "$work_directory" \
+      && unset ORACLE_BROWSER_PROFILE_DIR \
+      && ORACLE_HOME_DIR="$ORACLE_PR_SENTRY_ORACLE_HOME_DIR" \
         exec timeout --foreground --signal=TERM --kill-after=30s \
         "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s" \
         "$ORACLE_PR_SENTRY_ORACLE_BIN" \
@@ -1661,12 +1661,12 @@ run_oracle_review() {
     log ERROR "Oracle produced empty or invalid Markdown for $repository#$number"
     return 1
   fi
-  output_size=$(wc -c <"$output_file") || return 1
+  output_size=$(wc -c < "$output_file") || return 1
   if ((output_size > ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES)); then
     log ERROR "Oracle output is $output_size bytes; review limit is $ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES"
     return 1
   fi
-  if ! jq -Rs -e 'test("\\S")' <"$output_file" >/dev/null; then
+  if ! jq -Rs -e 'test("\\S")' < "$output_file" > /dev/null; then
     log ERROR "Oracle produced empty or invalid Markdown for $repository#$number"
     return 1
   fi
@@ -1729,13 +1729,13 @@ publish_review() {
   SNAPSHOT_MARKER=$initial_marker
 
   if ! {
-    printf '%s\n\n' "$(<"$ORACLE_OUTPUT_FILE")"
+    printf '%s\n\n' "$(< "$ORACLE_OUTPUT_FILE")"
     printf '%s\n' "$SNAPSHOT_MARKER"
-  } >"$publication_file"; then
+  } > "$publication_file"; then
     log ERROR "failed to assemble review body for $repository#$number"
     return 1
   fi
-  publication_size=$(wc -c <"$publication_file") || return 1
+  publication_size=$(wc -c < "$publication_file") || return 1
   if ((publication_size > ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES)); then
     log ERROR "review body is $publication_size bytes; limit is $ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES"
     return 1
@@ -1757,15 +1757,15 @@ process_candidate() {
   local new_ci_failure_count latest_ci_failure_count reason publish_status
   local baseline_marker=""
 
-  repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") || return 1
-  number=$(jq -r '.number // 0' <<<"$candidate") || return 1
-  [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
-    {
+  repository=$(jq -r '.repository.nameWithOwner // ""' <<< "$candidate") || return 1
+  number=$(jq -r '.number // 0' <<< "$candidate") || return 1
+  [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+    || {
       log ERROR "discovery returned an invalid repository identifier"
       return 1
     }
-  [[ "$number" =~ ^[1-9][0-9]*$ ]] ||
-    {
+  [[ "$number" =~ ^[1-9][0-9]*$ ]] \
+    || {
       log ERROR "discovery returned an invalid PR number for $repository"
       return 1
     }
@@ -1787,21 +1787,21 @@ process_candidate() {
     return 0
   fi
 
-  old_entry=$(jq -c --arg key "$SNAPSHOT_KEY" '.prs[$key] // {}' <<<"$STATE_JSON") || return 1
+  old_entry=$(jq -c --arg key "$SNAPSHOT_KEY" '.prs[$key] // {}' <<< "$STATE_JSON") || return 1
   comparison_fingerprint=$(jq -r \
     '.comparison.fingerprint // .reviewed.input_fingerprint // ""' \
-    <<<"$old_entry") || return 1
+    <<< "$old_entry") || return 1
   comparison_context=$(jq -r \
     '.comparison.context_fingerprint // .reviewed.context_fingerprint // ""' \
-    <<<"$old_entry") || return 1
+    <<< "$old_entry") || return 1
   comparison_head=$(jq -r \
     '.comparison.head_sha // .reviewed.head_sha // ""' \
-    <<<"$old_entry") || return 1
+    <<< "$old_entry") || return 1
   comparison_external=$(jq -r \
     '.comparison.external_digest // .reviewed.external_digest // ""' \
-    <<<"$old_entry") || return 1
-  observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<<"$old_entry") || return 1
-  observed_draft=$(jq -r '.observed.draft // false' <<<"$old_entry") || return 1
+    <<< "$old_entry") || return 1
+  observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<< "$old_entry") || return 1
+  observed_draft=$(jq -r '.observed.draft // false' <<< "$old_entry") || return 1
   now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
   new_ci_failure_count=$(jq -cn \
@@ -1832,14 +1832,14 @@ process_candidate() {
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" "$SNAPSHOT_DRAFT" \
-        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
-        ! state_mark_comparison \
+        "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" \
+        || ! state_mark_comparison \
           "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" \
           "$SNAPSHOT_CONTEXT_FINGERPRINT" "$SNAPSHOT_HEAD" \
           "$SNAPSHOT_DRAFT" "$SNAPSHOT_CI_DIGEST" \
           "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
-          "$SNAPSHOT_LATEST_PUBLICATION_MARKER" ||
-        ! persist_state; then
+          "$SNAPSHOT_LATEST_PUBLICATION_MARKER" \
+        || ! persist_state; then
         return 1
       fi
     fi
@@ -1860,8 +1860,8 @@ process_candidate() {
         "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now"; then
         return 1
       fi
-      if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] &&
-        ! state_mark_comparison \
+      if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] \
+        && ! state_mark_comparison \
           "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" \
           "$SNAPSHOT_CONTEXT_FINGERPRINT" "$SNAPSHOT_HEAD" \
           true "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
@@ -1920,8 +1920,8 @@ process_candidate() {
         "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now"; then
         return 1
       fi
-      if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] &&
-        ! state_mark_comparison \
+      if [[ -z "$comparison_fingerprint" && -n "$baseline_marker" ]] \
+        && ! state_mark_comparison \
           "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" \
           "$SNAPSHOT_CONTEXT_FINGERPRINT" "$SNAPSHOT_HEAD" \
           false "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
@@ -2004,8 +2004,8 @@ run_sentry() {
   if ! SENTRY_LOGIN=$(gh api user --jq .login); then
     die "failed to identify the authenticated GitHub account"
   fi
-  [[ "$SENTRY_LOGIN" =~ ^[A-Za-z0-9_.-]+(\[bot\])?$ ]] ||
-    die "GitHub returned an invalid authenticated login"
+  [[ "$SENTRY_LOGIN" =~ ^[A-Za-z0-9_.-]+(\[bot\])?$ ]] \
+    || die "GitHub returned an invalid authenticated login"
   ORACLE_PR_SENTRY_GITHUB_OWNER="${ORACLE_PR_SENTRY_GITHUB_OWNER:-$SENTRY_LOGIN}"
   ORACLE_PR_SENTRY_GITHUB_AUTHOR="${ORACLE_PR_SENTRY_GITHUB_AUTHOR:-$SENTRY_LOGIN}"
 
@@ -2017,8 +2017,8 @@ run_sentry() {
 
   for candidate in "${candidates[@]}"; do
     ((processed += 1))
-    if ((ORACLE_PR_SENTRY_DRY_RUN == 0)) &&
-      ! checkpoint_candidate_cursor "$candidate"; then
+    if ((ORACLE_PR_SENTRY_DRY_RUN == 0)) \
+      && ! checkpoint_candidate_cursor "$candidate"; then
       ((failures += 1))
       log ERROR "candidate rotation checkpoint failed; continuing without a durable cursor"
     fi

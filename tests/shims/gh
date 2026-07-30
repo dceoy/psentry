@@ -6,8 +6,8 @@ set -euo pipefail
 : "${GH_FIXTURE:?GH_FIXTURE is required}"
 
 mkdir -p -- "$GH_SHIM_STATE_DIR"
-printf '%q ' "$@" >>"$GH_SHIM_STATE_DIR/gh.log"
-printf '\n' >>"$GH_SHIM_STATE_DIR/gh.log"
+printf '%q ' "$@" >> "$GH_SHIM_STATE_DIR/gh.log"
+printf '\n' >> "$GH_SHIM_STATE_DIR/gh.log"
 
 emit_candidates() {
   local numbers=$1
@@ -20,8 +20,8 @@ emit_candidates() {
     return
   fi
 
-  printf '%s\n' "${numbers//,/$'\n'}" |
-    jq -Rsc \
+  printf '%s\n' "${numbers//,/$'\n'}" \
+    | jq -Rsc \
       --arg repository "$repository" \
       --argjson draft "$draft" \
       --argjson limit "$limit" '
@@ -48,12 +48,12 @@ append_posted_review() {
     for posted_file in "$GH_SHIM_STATE_DIR"/posted-"$number"-*.md; do
       [[ -s "$posted_file" ]] || continue
       posted_bodies=$(jq -c --rawfile body "$posted_file" '. + [$body]' \
-        <<<"$posted_bodies")
+        <<< "$posted_bodies")
     done
     for baseline_file in "$GH_SHIM_STATE_DIR"/baseline-"$number"-*.md; do
       [[ -s "$baseline_file" ]] || continue
       baseline_bodies=$(jq -c --rawfile body "$baseline_file" '. + [$body]' \
-        <<<"$baseline_bodies")
+        <<< "$baseline_bodies")
     done
   fi
 
@@ -230,17 +230,17 @@ case "${1:-} ${2:-}" in
     fixture=${!fixture_variable:-$GH_FIXTURE}
     view_count_file="$GH_SHIM_STATE_DIR/view-count-$number"
     view_count=0
-    [[ -f "$view_count_file" ]] && view_count=$(<"$view_count_file")
+    [[ -f "$view_count_file" ]] && view_count=$(< "$view_count_file")
     ((view_count += 1))
-    printf '%s\n' "$view_count" >"$view_count_file"
+    printf '%s\n' "$view_count" > "$view_count_file"
 
-    append_posted_review "$fixture" "$number" |
-      jq --argjson number "$number" \
+    append_posted_review "$fixture" "$number" \
+      | jq --argjson number "$number" \
         --arg repository "${GH_REPOSITORY:-octo/example}" '
           .number = $number
           | .url = ("https://github.com/" + $repository + "/pull/" + ($number | tostring))
-        ' |
-      if [[ "${GH_RACE_HEAD:-0}" == 1 && "$view_count" -gt 1 ]]; then
+        ' \
+      | if [[ "${GH_RACE_HEAD:-0}" == 1 && "$view_count" -gt 1 ]]; then
         jq '.headRefOid = "cccccccccccccccccccccccccccccccccccccccc"'
       elif [[ "${GH_RACE_REQUIREMENTS:-0}" == 1 && "$view_count" -gt 1 ]]; then
         jq '
@@ -266,11 +266,11 @@ case "${1:-} ${2:-}" in
     fi
     diff_count_file="$GH_SHIM_STATE_DIR/diff-count"
     diff_count=0
-    [[ -f "$diff_count_file" ]] && diff_count=$(<"$diff_count_file")
+    [[ -f "$diff_count_file" ]] && diff_count=$(< "$diff_count_file")
     ((diff_count += 1))
-    printf '%s\n' "$diff_count" >"$diff_count_file"
+    printf '%s\n' "$diff_count" > "$diff_count_file"
 
-    printf '%s\n' "$(<"${GH_DIFF_FIXTURE:?GH_DIFF_FIXTURE is required}")"
+    printf '%s\n' "$(< "${GH_DIFF_FIXTURE:?GH_DIFF_FIXTURE is required}")"
     if [[ "${GH_RACE_DIFF:-0}" == 1 && "$diff_count" -gt 1 ]]; then
       printf '+base branch changed during review\n'
     fi
@@ -306,9 +306,9 @@ case "${1:-} ${2:-}" in
     if grep -Fq -- ' kind=baseline ' "$body_file"; then
       count_file="$GH_SHIM_STATE_DIR/baseline-count"
       count=0
-      [[ -f "$count_file" ]] && count=$(<"$count_file")
+      [[ -f "$count_file" ]] && count=$(< "$count_file")
       ((count += 1))
-      printf '%s\n' "$count" >"$count_file"
+      printf '%s\n' "$count" > "$count_file"
       printf -v history_file '%s/baseline-%s-%06d.md' \
         "$GH_SHIM_STATE_DIR" "$number" "$count"
       cp -- "$body_file" "$history_file"
@@ -316,9 +316,9 @@ case "${1:-} ${2:-}" in
       cp -- "$body_file" "$GH_SHIM_STATE_DIR/posted-$number.md"
       count_file="$GH_SHIM_STATE_DIR/review-count"
       count=0
-      [[ -f "$count_file" ]] && count=$(<"$count_file")
+      [[ -f "$count_file" ]] && count=$(< "$count_file")
       ((count += 1))
-      printf '%s\n' "$count" >"$count_file"
+      printf '%s\n' "$count" > "$count_file"
       printf -v history_file '%s/posted-%s-%06d.md' \
         "$GH_SHIM_STATE_DIR" "$number" "$count"
       cp -- "$body_file" "$history_file"

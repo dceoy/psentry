@@ -23,5 +23,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes bats shellcheck shfmt
 
+      - name: Install workflow linting tools
+        run: |
+          pipx install zizmor
+          pipx install yamllint
+          pipx install checkov
+          bash <(curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) latest "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Run static and offline checks
-        run: make check
+        run: .agents/skills/local-qa/scripts/qa.sh

@@ -139,27 +139,27 @@ chmod 600 ~/.config/oracle-pr-sentry/env
 The sourced file takes precedence over exported environment values; the
 `--dry-run` command-line option takes precedence over both.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ORACLE_PR_SENTRY_GITHUB_OWNER` | authenticated `gh` login | Repository owner or organization filter |
-| `ORACLE_PR_SENTRY_GITHUB_AUTHOR` | authenticated `gh` login | Pull request author filter |
-| `ORACLE_PR_SENTRY_PR_SEARCH_LIMIT` | `50` | Maximum most-recently-updated ready and draft observations per search |
-| `ORACLE_PR_SENTRY_ORACLE_BIN` | `oracle` | Oracle executable name or absolute path |
-| `ORACLE_PR_SENTRY_ORACLE_MODEL` | `gpt-5.5-pro` | ChatGPT model requested from Oracle |
-| `ORACLE_PR_SENTRY_ORACLE_THINKING_TIME` | `extended` | Oracle browser thinking level |
-| `ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN` | `1` | Reuse Oracle's persistent manual-login profile |
-| `ORACLE_PR_SENTRY_ORACLE_HOME_DIR` | `$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` | Private `ORACLE_HOME_DIR` isolating Oracle's config and browser profile from `~/.oracle` |
-| `ORACLE_PR_SENTRY_ORACLE_ARGS_FILE` | unset | Optional file containing one literal Oracle argument per line |
-| `ORACLE_PR_SENTRY_PROMPT_PATH` | installed prompt | Independently editable review instructions |
-| `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` | `1800` | Oracle timeout in whole seconds |
-| `ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES` | `60000` | Maximum generated review plus marker |
-| `ORACLE_PR_SENTRY_STATE_FILE` | `$XDG_STATE_HOME/oracle-pr-sentry/state.json` | Persistent review state and candidate-rotation cursor |
-| `ORACLE_PR_SENTRY_RETENTION_DAYS` | `30` | Age before unseen/closed/ineligible entries are pruned |
-| `ORACLE_PR_SENTRY_CACHE_DIR` | `$XDG_CACHE_HOME/oracle-pr-sentry` | Private cache directory |
-| `ORACLE_PR_SENTRY_RUNTIME_DIR` | `$XDG_RUNTIME_DIR/oracle-pr-sentry-$UID` | Lock and secure temporary workspace |
-| `ORACLE_PR_SENTRY_LOCK_FILE` | runtime directory `sentry.lock` | Global non-blocking lock |
-| `ORACLE_PR_SENTRY_IDENTITY` | `oracle-pr-sentry` | Identity encoded in hidden review markers |
-| `ORACLE_PR_SENTRY_DRY_RUN` | `0` | Environment equivalent of `--dry-run` |
+| Variable                                 | Default                                       | Purpose                                                                                  |
+| ---------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `ORACLE_PR_SENTRY_GITHUB_OWNER`          | authenticated `gh` login                      | Repository owner or organization filter                                                  |
+| `ORACLE_PR_SENTRY_GITHUB_AUTHOR`         | authenticated `gh` login                      | Pull request author filter                                                               |
+| `ORACLE_PR_SENTRY_PR_SEARCH_LIMIT`       | `50`                                          | Maximum most-recently-updated ready and draft observations per search                    |
+| `ORACLE_PR_SENTRY_ORACLE_BIN`            | `oracle`                                      | Oracle executable name or absolute path                                                  |
+| `ORACLE_PR_SENTRY_ORACLE_MODEL`          | `gpt-5.5-pro`                                 | ChatGPT model requested from Oracle                                                      |
+| `ORACLE_PR_SENTRY_ORACLE_THINKING_TIME`  | `extended`                                    | Oracle browser thinking level                                                            |
+| `ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN`   | `1`                                           | Reuse Oracle's persistent manual-login profile                                           |
+| `ORACLE_PR_SENTRY_ORACLE_HOME_DIR`       | `$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` | Private `ORACLE_HOME_DIR` isolating Oracle's config and browser profile from `~/.oracle` |
+| `ORACLE_PR_SENTRY_ORACLE_ARGS_FILE`      | unset                                         | Optional file containing one literal Oracle argument per line                            |
+| `ORACLE_PR_SENTRY_PROMPT_PATH`           | installed prompt                              | Independently editable review instructions                                               |
+| `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME`    | `1800`                                        | Oracle timeout in whole seconds                                                          |
+| `ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES` | `60000`                                       | Maximum generated review plus marker                                                     |
+| `ORACLE_PR_SENTRY_STATE_FILE`            | `$XDG_STATE_HOME/oracle-pr-sentry/state.json` | Persistent review state and candidate-rotation cursor                                    |
+| `ORACLE_PR_SENTRY_RETENTION_DAYS`        | `30`                                          | Age before unseen/closed/ineligible entries are pruned                                   |
+| `ORACLE_PR_SENTRY_CACHE_DIR`             | `$XDG_CACHE_HOME/oracle-pr-sentry`            | Private cache directory                                                                  |
+| `ORACLE_PR_SENTRY_RUNTIME_DIR`           | `$XDG_RUNTIME_DIR/oracle-pr-sentry-$UID`      | Lock and secure temporary workspace                                                      |
+| `ORACLE_PR_SENTRY_LOCK_FILE`             | runtime directory `sentry.lock`               | Global non-blocking lock                                                                 |
+| `ORACLE_PR_SENTRY_IDENTITY`              | `oracle-pr-sentry`                            | Identity encoded in hidden review markers                                                |
+| `ORACLE_PR_SENTRY_DRY_RUN`               | `0`                                           | Environment equivalent of `--dry-run`                                                    |
 
 The arguments file is not shell-parsed. Put each flag and value on separate
 lines:
@@ -313,14 +313,15 @@ The test suite uses checked-in fixtures and command shims. It does not launch a
 browser, authenticate to ChatGPT, or write to GitHub:
 
 ```console
-make check
+.agents/skills/local-qa/scripts/qa.sh
 ```
 
-This runs ShellCheck, `shfmt -d`, and Bats scenarios covering new and
-unchanged PRs, head and CI changes, draft readiness, external activity, marker
-filtering and recovery, canonical reordering, Oracle errors/timeouts/empty
-output, stale heads, atomic-state failure, concurrency, malformed state,
-discovery filters, and per-PR error isolation. CI requires no repository
-secrets.
+This formats Markdown and shell scripts, runs ShellCheck, and runs Bats
+scenarios covering new and unchanged PRs, head and CI changes, draft
+readiness, external activity, marker filtering and recovery, canonical
+reordering, Oracle errors/timeouts/empty output, stale heads, atomic-state
+failure, concurrency, malformed state, discovery filters, and per-PR error
+isolation. It also lints and fixes the GitHub Actions workflows with zizmor,
+actionlint, yamllint, and checkov. CI requires no repository secrets.
 
 The GitHub Actions workflow has read-only repository contents permission.

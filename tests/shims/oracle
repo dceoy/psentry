@@ -4,14 +4,14 @@ set -euo pipefail
 
 : "${GH_SHIM_STATE_DIR:?GH_SHIM_STATE_DIR is required}"
 
-printf '%q ' "$@" >>"$GH_SHIM_STATE_DIR/oracle.log"
-printf '\n' >>"$GH_SHIM_STATE_DIR/oracle.log"
+printf '%q ' "$@" >> "$GH_SHIM_STATE_DIR/oracle.log"
+printf '\n' >> "$GH_SHIM_STATE_DIR/oracle.log"
 
 {
   printf 'ORACLE_HOME_DIR=%s\n' "${ORACLE_HOME_DIR:-}"
   printf 'ORACLE_BROWSER_PROFILE_DIR=%s\n' "${ORACLE_BROWSER_PROFILE_DIR:-}"
   printf 'PWD=%s\n' "$(pwd)"
-} >>"$GH_SHIM_STATE_DIR/oracle-env.log"
+} >> "$GH_SHIM_STATE_DIR/oracle-env.log"
 
 metadata_file=""
 output_file=""
@@ -43,8 +43,8 @@ if [[ -n "$metadata_file" ]]; then
 fi
 
 if [[ -n "${ORACLE_SLEEP:-}" ]]; then
-  if [[ -z "${ORACLE_SLEEP_PR_NUMBER:-}" ]] ||
-    [[ "$(jq -r '.number // ""' "$metadata_file")" == "$ORACLE_SLEEP_PR_NUMBER" ]]; then
+  if [[ -z "${ORACLE_SLEEP_PR_NUMBER:-}" ]] \
+    || [[ "$(jq -r '.number // ""' "$metadata_file")" == "$ORACLE_SLEEP_PR_NUMBER" ]]; then
     sleep "$ORACLE_SLEEP"
   fi
 fi
@@ -52,7 +52,7 @@ if [[ "${ORACLE_EXIT_STATUS:-0}" != 0 ]]; then
   exit "$ORACLE_EXIT_STATUS"
 fi
 if [[ "${ORACLE_EMPTY_OUTPUT:-0}" == 1 ]]; then
-  : >"$output_file"
+  : > "$output_file"
 else
-  printf '%s\n' "${ORACLE_REVIEW_TEXT:-No blocking findings were found.}" >"$output_file"
+  printf '%s\n' "${ORACLE_REVIEW_TEXT:-No blocking findings were found.}" > "$output_file"
 fi

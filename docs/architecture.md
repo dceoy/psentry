@@ -47,9 +47,9 @@ are projected to stable fields and sorted deterministically.
   "author": "author-login",
   "state": "OPEN",
   "draft": false,
-  "base": {"ref": "main"},
-  "head": {"ref": "feature", "sha": "40-character-sha"},
-  "diff": {"sha256": "sha256-of-the-exact-unified-diff"},
+  "base": { "ref": "main" },
+  "head": { "ref": "feature", "sha": "40-character-sha" },
+  "diff": { "sha256": "sha256-of-the-exact-unified-diff" },
   "checks": [
     {
       "name": "test",
@@ -80,9 +80,7 @@ are projected to stable fields and sorted deterministically.
   ],
   "external_activity": [],
   "publications": [],
-  "files": [
-    {"path": "src/file", "additions": 3, "deletions": 1}
-  ]
+  "files": [{ "path": "src/file", "additions": 3, "deletions": 1 }]
 }
 ```
 
