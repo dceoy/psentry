@@ -802,6 +802,7 @@ setup() {
     --wait --wait=true --no-wait --no-wait=true \
     --dry-run --dry-run=true --preview --preview=true \
     --render --render=true --render-markdown --render-markdown=true \
+    --copy-markdown --copy-markdown=true \
     --include --include=/tmp/secret \
     --files --files=/tmp/secret \
     --path --path=/tmp/secret \
@@ -846,6 +847,8 @@ setup() {
     --browser-tab --browser-tab=current \
     --browser-attach-running --browser-attach-running=true \
     --browser-keep-browser --browser-keep-browser=true \
+    --browser-manual-login-profile-dir \
+    --browser-manual-login-profile-dir=/tmp/attacker-profile \
     --remote-host --remote-host=reviewer.example:9473 \
     --remote-token --remote-token=example \
     --remote-chrome --remote-chrome=reviewer.example:9222 \

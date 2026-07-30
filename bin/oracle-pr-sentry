@@ -366,6 +366,7 @@ load_oracle_extra_args() {
         --wait | --wait=* | --no-wait | --no-wait=* | --dry-run | --dry-run=* | \
         --preview | --preview=* | --render | --render=* | \
         --render-markdown | --render-markdown=* | --copy | \
+        --copy-markdown | --copy-markdown=* | \
         --route | --route=* | --preflight | --preflight=* | \
         --base-url | --base-url=* | --provider | --provider=* | \
         --no-azure | --no-azure=* | --azure-endpoint | --azure-endpoint=* | \
@@ -381,6 +382,8 @@ load_oracle_extra_args() {
         --browser-model-strategy=* | --browser-tab | --browser-tab=* | \
         --browser-attach-running | --browser-attach-running=* | \
         --browser-keep-browser | --browser-keep-browser=* | \
+        --browser-manual-login-profile-dir | \
+        --browser-manual-login-profile-dir=* | \
         --remote-host | --remote-host=* | --remote-token | --remote-token=* | \
         --remote-chrome | --remote-chrome=* | --status | --status=* | \
         --session | --session=* | --exec-session | --exec-session=* | \
