@@ -56,8 +56,7 @@ check() {
 
   arch="$(uname -m 2> /dev/null || printf unknown)"
   case "${arch}" in
-    arm64 | aarch64)
-      ;;
+    arm64 | aarch64) ;;
     *)
       printf 'ERROR: Apple silicon (arm64) is required; detected %s.\n' "${arch}" >&2
       return 1
