@@ -444,10 +444,6 @@ load_state() {
         and (.draft | type == "boolean")
         and (.last_seen_at | type == "string")
         and (
-          (has("revision") | not)
-          or (.revision | type == "number" and floor == . and . >= 0)
-        )
-        and (
           (has("ci_digest") | not)
           or (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
         )
@@ -533,16 +529,14 @@ state_observe() {
     --arg ci_digest "$ci_digest" \
     --argjson ci_failures "$ci_failures" \
     --arg seen_at "$seen_at" '
-      (.prs[$key].observed.revision // 0) as $revision
-      | .prs[$key] = ((.prs[$key] // {}) + {
+      .prs[$key] = ((.prs[$key] // {}) + {
         url: $url,
         observed: {
           head_sha: $head_sha,
           draft: $draft,
           ci_digest: $ci_digest,
           ci_failures: $ci_failures,
-          last_seen_at: $seen_at,
-          revision: ($revision + 1)
+          last_seen_at: $seen_at
         }
       })
     ' <<<"$STATE_JSON"); then
@@ -665,7 +659,7 @@ collect_snapshot() {
   local raw_pr="$work_directory/pr.json"
   local review_pages="$work_directory/review-comments.json"
   local snapshot_file="$work_directory/snapshot.json"
-  local marker_prefix="<!-- $PROGRAM_NAME:v1 "
+  local marker_prefix="<!-- $PROGRAM_NAME:v"
 
   if ! gh pr view "$number" --repo "$repository" --json \
     number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,statusCheckRollup,reviews,comments,files \
@@ -688,20 +682,57 @@ collect_snapshot() {
     --slurpfile review_pages "$review_pages" '
       def text:
         (. // "") | tostring;
+      def parse_marker:
+        (
+          try (
+            .body
+            | capture(
+                "(?:^|\\n)<!-- oracle-pr-sentry:v2 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) -->\\n?$"
+              )
+            | .event_sequence |= tonumber
+            | . + {
+                version: 2,
+                marker: (
+                  "<!-- oracle-pr-sentry:v2 identity=" + .identity
+                  + " fingerprint=" + .fingerprint
+                  + " input=" + .input_fingerprint
+                  + " head=" + .head_sha
+                  + " event=" + (.event_sequence | tostring)
+                  + " -->"
+                )
+              }
+          ) catch null
+        ) as $v2
+        | if $v2 != null
+          then $v2
+          else
+            (
+              try (
+                .body
+                | capture(
+                    "(?:^|\\n)<!-- oracle-pr-sentry:v1 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) -->\\n?$"
+                  )
+                | . + {
+                    version: 1,
+                    input_fingerprint: .fingerprint,
+                    event_sequence: 0,
+                    marker: (
+                      "<!-- oracle-pr-sentry:v1 identity=" + .identity
+                      + " fingerprint=" + .fingerprint
+                      + " head=" + .head_sha
+                      + " -->"
+                    )
+                  }
+              ) catch null
+            )
+          end;
       def trusted_marker:
         . as $activity
         | if $activity.author != $sentry_login
             or ($activity.body | indices($marker_prefix) | length) != 1
           then null
           else
-            (
-              try (
-                $activity.body
-                | capture(
-                    "(?:^|\\n)<!-- oracle-pr-sentry:v1 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) -->\\n?$"
-                  )
-              ) catch null
-            ) as $marker
+            ($activity | parse_marker) as $marker
             | if $marker != null and $marker.identity == $sentry_identity
               then $marker
               else null
@@ -797,8 +828,11 @@ collect_snapshot() {
           ],
           publications: [
             $activities[]
-            | trusted_marker
+            | . as $activity
+            | (trusted_marker) as $marker
+            | $marker
             | select(. != null)
+            | . + {created_at: $activity.created_at}
           ],
           files: [
             (.files // [])[] | {
@@ -838,20 +872,20 @@ digest_text() {
   printf '%s' "$1" | sha256sum | awk '{print $1}'
 }
 
-trigger_fingerprint() {
-  local base_fingerprint=$1
+event_fingerprint() {
+  local input_fingerprint=$1
   local reason=$2
-  local observed_revision=$3
+  local event_sequence=$3
 
   jq -cnS \
-    --arg base_fingerprint "$base_fingerprint" \
+    --arg input_fingerprint "$input_fingerprint" \
     --arg reason "$reason" \
-    --argjson observed_revision "$observed_revision" '
+    --argjson event_sequence "$event_sequence" '
       {
-        schema_version: 1,
-        base_fingerprint: $base_fingerprint,
+        schema_version: 2,
+        input_fingerprint: $input_fingerprint,
         reason: $reason,
-        observed_revision: $observed_revision
+        event_sequence: $event_sequence
       }
     ' | sha256sum | awk '{print $1}'
 }
@@ -905,6 +939,29 @@ snapshot_facts() {
       }
     ' | sha256sum | awk '{print $1}') || return 1
   SNAPSHOT_INPUT_FINGERPRINT=$SNAPSHOT_FINGERPRINT
+  SNAPSHOT_EVENT_SEQUENCE=$(jq '
+    (([.publications[].event_sequence] | max) // 0) + 1
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_PUBLICATION_VERSION=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .version // 0
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_PUBLICATION_FINGERPRINT=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .fingerprint // ""
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_PUBLICATION_INPUT=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .input_fingerprint // ""
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_PUBLICATION_HEAD=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .head_sha // ""
+  ' "$snapshot_file") || return 1
+  SNAPSHOT_LATEST_PUBLICATION_MARKER=$(jq -r '
+    ((.publications | max_by([.event_sequence, .created_at])) // {})
+    | .marker // ""
+  ' "$snapshot_file") || return 1
   SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
 }
 
@@ -1011,7 +1068,7 @@ run_oracle_review() {
     log ERROR "Oracle produced empty or invalid Markdown for $repository#$number"
     return 1
   fi
-  if grep -Fq -- "<!-- $PROGRAM_NAME:v1 " "$output_file"; then
+  if grep -Fq -- "<!-- $PROGRAM_NAME:v" "$output_file"; then
     log ERROR "Oracle output contains the reserved publication marker prefix for $repository#$number"
     return 1
   fi
@@ -1027,6 +1084,7 @@ publish_review() {
   local initial_head=$SNAPSHOT_HEAD
   local initial_fingerprint=$SNAPSHOT_FINGERPRINT
   local initial_input_fingerprint=$SNAPSHOT_INPUT_FINGERPRINT
+  local initial_event_sequence=$SNAPSHOT_EVENT_SEQUENCE
   local initial_marker=$SNAPSHOT_MARKER
   local publication_file="$work_directory/publication.md"
   local publication_size
@@ -1060,7 +1118,8 @@ publish_review() {
     log ERROR "failed to calculate fresh snapshot facts for $repository#$number"
     return 1
   fi
-  if [[ "$SNAPSHOT_INPUT_FINGERPRINT" != "$initial_input_fingerprint" ]]; then
+  if [[ "$SNAPSHOT_INPUT_FINGERPRINT" != "$initial_input_fingerprint" ||
+    "$SNAPSHOT_EVENT_SEQUENCE" != "$initial_event_sequence" ]]; then
     log INFO "discarding stale review for $repository#$number; review inputs changed"
     return 1
   fi
@@ -1092,7 +1151,7 @@ process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
   local reviewed_fingerprint reviewed_head reviewed_external
-  local observed_ci observed_ci_json observed_draft observed_revision
+  local observed_ci observed_ci_json observed_draft
   local new_ci_failure_count reason publish_status
 
   repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") || return 1
@@ -1132,7 +1191,6 @@ process_candidate() {
   observed_ci=$(jq -r '.observed.ci_digest // .reviewed.ci_digest // ""' <<<"$old_entry") || return 1
   observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<<"$old_entry") || return 1
   observed_draft=$(jq -r '.observed.draft // false' <<<"$old_entry") || return 1
-  observed_revision=$(jq -r '.observed.revision // 0' <<<"$old_entry") || return 1
   now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
   if jq -e '.observed | has("ci_failures")' <<<"$old_entry" >/dev/null; then
@@ -1194,16 +1252,34 @@ process_candidate() {
     return
   fi
 
-  if [[ "$reason" == "draft-to-ready" || "$reason" == "ci-failure" ]] &&
-    snapshot_has_publication \
-      "$SNAPSHOT_FILE" "$SNAPSHOT_FINGERPRINT" "$SNAPSHOT_HEAD"; then
-    if ! SNAPSHOT_FINGERPRINT=$(trigger_fingerprint \
-      "$SNAPSHOT_FINGERPRINT" "$reason" "$observed_revision"); then
-      log ERROR "failed to calculate transition fingerprint for $SNAPSHOT_KEY"
-      return 1
+  if [[ "$reason" == "new-pr" ]]; then
+    if [[ "$SNAPSHOT_LATEST_PUBLICATION_VERSION" == 2 &&
+      "$SNAPSHOT_LATEST_PUBLICATION_INPUT" == "$SNAPSHOT_INPUT_FINGERPRINT" &&
+      "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" ]]; then
+      SNAPSHOT_FINGERPRINT=$SNAPSHOT_LATEST_PUBLICATION_FINGERPRINT
+      SNAPSHOT_MARKER=$SNAPSHOT_LATEST_PUBLICATION_MARKER
+      log INFO "latest GitHub marker matches $SNAPSHOT_KEY; recovering local state"
+      if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
+        record_success recovered
+      fi
+      return
+    elif [[ "$SNAPSHOT_LATEST_PUBLICATION_VERSION" != 2 ]] &&
+      snapshot_has_publication \
+        "$SNAPSHOT_FILE" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD"; then
+      log INFO "matching legacy GitHub marker found for $SNAPSHOT_KEY; recovering local state"
+      if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
+        record_success recovered
+      fi
+      return
     fi
-    SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
   fi
+
+  if ! SNAPSHOT_FINGERPRINT=$(event_fingerprint \
+    "$SNAPSHOT_INPUT_FINGERPRINT" "$reason" "$SNAPSHOT_EVENT_SEQUENCE"); then
+    log ERROR "failed to calculate event fingerprint for $SNAPSHOT_KEY"
+    return 1
+  fi
+  SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v2 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT input=$SNAPSHOT_INPUT_FINGERPRINT head=$SNAPSHOT_HEAD event=$SNAPSHOT_EVENT_SEQUENCE -->"
 
   if snapshot_has_publication "$SNAPSHOT_FILE" "$SNAPSHOT_FINGERPRINT" "$SNAPSHOT_HEAD"; then
     log INFO "matching GitHub marker found for $SNAPSHOT_KEY; recovering local state"

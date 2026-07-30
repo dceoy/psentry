@@ -114,11 +114,11 @@ changed external activity. Comparing the normalized current and previously
 observed failure sets prevents either a transition back to success or a
 shrinking failure set from scheduling a review by itself.
 
-If a draft-to-ready or recurring CI-failure transition returns to a base
-fingerprint that already has a trusted publication marker, the review
-fingerprint additionally hashes the trigger reason and the prior observed
-revision. This distinguishes the new event from the older review while keeping
-the derived marker stable across publication/state-write recovery.
+Every scheduled review receives an event fingerprint that hashes its input
+fingerprint, trigger reason, and the next event sequence recovered from trusted
+GitHub markers. The GitHub-observable sequence distinguishes repeated
+transitions, including a head returning to an older commit, without depending
+on resettable local state.
 
 The pull request title, body, files, checks, and discussion remain in the
 metadata supplied to Oracle. Code changes are represented by the head SHA;
@@ -141,8 +141,7 @@ keys:
         "draft": false,
         "ci_digest": "...",
         "ci_failures": [],
-        "last_seen_at": "2026-07-29T12:00:00Z",
-        "revision": 3
+        "last_seen_at": "2026-07-29T12:00:00Z"
       },
       "reviewed": {
         "fingerprint": "...",
@@ -151,7 +150,7 @@ keys:
         "ci_digest": "...",
         "external_digest": "...",
         "successful_at": "2026-07-29T12:00:00Z",
-        "marker": "<!-- oracle-pr-sentry:v1 ... -->",
+        "marker": "<!-- oracle-pr-sentry:v2 ... -->",
         "publication_status": "published"
       }
     }
@@ -162,9 +161,9 @@ keys:
 `observed` may advance for a draft or unchanged PR and records both the latest
 normalized CI failure set and its digest. A review is triggered only when the
 set gains a failure, while an intervening successful observation allows the
-same failure to trigger again later. Its monotonic per-PR revision gives
-repeated transitions a stable, unique review fingerprint without weakening
-marker-based retry recovery.
+same failure to trigger again later. Event identity comes from the durable
+sequence embedded in trusted GitHub publication markers, so state loss or
+retention pruning cannot reuse an older transition fingerprint.
 `reviewed` advances only after GitHub accepts the comment-only review or when
 an already-published exact marker is recovered. Oracle and GitHub failures
 never advance it.
@@ -183,16 +182,18 @@ changes without requiring a separate database or full closed-PR scan.
 Every review ends with:
 
 ```text
-<!-- oracle-pr-sentry:v1 identity=IDENTITY fingerprint=SHA256 head=HEAD_SHA -->
+<!-- oracle-pr-sentry:v2 identity=IDENTITY fingerprint=SHA256 input=INPUT_SHA256 head=HEAD_SHA event=SEQUENCE -->
 ```
 
-Before Oracle, an exact trusted marker can reconcile missing local state.
+Before Oracle, the latest trusted marker can reconcile missing local state when
+its input fingerprint and head match the current snapshot.
 Immediately before publication, the sentry collects a fresh snapshot and
 requires:
 
 - state is still open;
 - the PR is still ready;
 - head SHA is unchanged;
+- the input fingerprint and next event sequence are unchanged;
 - no exact trusted marker already exists.
 
 A stale Oracle result is discarded. Publication always uses

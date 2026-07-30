@@ -40,6 +40,23 @@ setup() {
   [[ "$output" == *"head-sha-changed"* ]]
 }
 
+@test "a head transition back to an older reviewed SHA schedules a new review" {
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-head-changed.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 3 ]
+  [ "$(oracle_count)" -eq 3 ]
+  [[ "$output" == *"head-sha-changed"* ]]
+}
+
 @test "a draft-to-ready transition is observed and reviewed" {
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=1
@@ -110,6 +127,39 @@ setup() {
 
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"ci-failure"* ]]
+}
+
+@test "a repeated CI transition stays unique after marker recovery" {
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 3 ]
+  [ "$(oracle_count)" -eq 3 ]
   [[ "$output" == *"ci-failure"* ]]
 }
 

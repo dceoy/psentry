@@ -40,18 +40,33 @@ emit_candidates() {
 append_posted_review() {
   local fixture=$1
   local number=$2
-  local posted_file="$GH_SHIM_STATE_DIR/posted-$number.md"
+  local posted_file
+  local posted_bodies='[]'
 
-  if [[ -s "$posted_file" && "${GH_INCLUDE_POSTED_MARKER:-1}" == 1 ]]; then
-    jq --rawfile body "$posted_file" '
-      .reviews += [{
-        id: "PRR_posted",
-        author: {login: "sentry-bot"},
-        submittedAt: "2026-07-29T12:00:00Z",
-        state: "COMMENTED",
-        body: $body,
-        commit: {oid: .headRefOid}
-      }]
+  if [[ "${GH_INCLUDE_POSTED_MARKER:-1}" == 1 ]]; then
+    for posted_file in "$GH_SHIM_STATE_DIR"/posted-"$number"-*.md; do
+      [[ -s "$posted_file" ]] || continue
+      posted_bodies=$(jq -c --rawfile body "$posted_file" '. + [$body]' \
+        <<<"$posted_bodies")
+    done
+  fi
+
+  if [[ "$posted_bodies" != '[]' ]]; then
+    jq --argjson bodies "$posted_bodies" '
+      .reviews += [
+        $bodies
+        | to_entries[]
+        | {
+            id: ("PRR_posted_" + (.key | tostring)),
+            author: {login: "sentry-bot"},
+            submittedAt: (
+              "2026-07-29T12:00:0" + (.key | tostring) + "Z"
+            ),
+            state: "COMMENTED",
+            body: .value,
+            commit: {oid: .headRefOid}
+          }
+      ]
     ' "$fixture"
   else
     jq . "$fixture"
@@ -157,6 +172,9 @@ case "${1:-} ${2:-}" in
     [[ -f "$count_file" ]] && count=$(<"$count_file")
     ((count += 1))
     printf '%s\n' "$count" >"$count_file"
+    printf -v history_file '%s/posted-%s-%06d.md' \
+      "$GH_SHIM_STATE_DIR" "$number" "$count"
+    cp -- "$body_file" "$history_file"
     ;;
   "api --paginate")
     printf '[[]]\n'
