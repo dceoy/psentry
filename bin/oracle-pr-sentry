@@ -353,18 +353,30 @@ load_oracle_extra_args() {
     [[ -n "$argument" && "$argument" != \#* ]] || continue
     case "$argument" in
       --engine | --engine=* | --mode | --mode=* | -e | -e?* | \
+        --model | --model=* | -m | -m?* | --models | --models=* | \
         --prompt | --prompt=* | -p | -p?* | --file | --file=* | -f | -f?* | \
         --include | --include=* | --files | --files=* | --path | --path=* | \
         --paths | --paths=* | --write-output | --write-output=* | \
         --background | --background=* | --no-background | --no-background=* | \
         --wait | --wait=* | --no-wait | --no-wait=* | --dry-run | --dry-run=* | \
         --preview | --preview=* | --render | --render=* | \
-        --render-markdown | --render-markdown=* | --copy | --models | --models=* | \
+        --render-markdown | --render-markdown=* | --copy | \
+        --route | --route=* | --preflight | --preflight=* | \
+        --base-url | --base-url=* | --provider | --provider=* | \
+        --no-azure | --no-azure=* | --azure-endpoint | --azure-endpoint=* | \
+        --azure-deployment | --azure-deployment=* | \
+        --azure-api-version | --azure-api-version=* | \
         --followup | --followup=* | --generate-image | --generate-image=* | \
         --edit-image | --edit-image=* | --output | --output=* | \
         --browser-max-concurrent-tabs | --browser-max-concurrent-tabs=* | \
+        --browser-thinking-time | --browser-thinking-time=* | \
         --browser-follow-up | --browser-follow-up=* | --browser-research | \
-        --browser-research=* | --youtube | --youtube=*)
+        --browser-research=* | --chatgpt-url | --chatgpt-url=* | \
+        --browser-url | --browser-url=* | --browser-model-strategy | \
+        --browser-model-strategy=* | --browser-tab | --browser-tab=* | \
+        --browser-attach-running | --browser-attach-running=* | \
+        --remote-host | --remote-host=* | --remote-token | --remote-token=* | \
+        --remote-chrome | --remote-chrome=* | --youtube | --youtube=*)
         die "Oracle argument is controlled by the sentry and cannot be overridden: $argument"
         ;;
     esac

@@ -742,6 +742,35 @@ setup() {
   done
 }
 
+@test "Oracle context and routing controls cannot be overridden" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  for controlled_argument in \
+    --model --model=gpt-5.5 -m -mgpt-5.5 \
+    --browser-thinking-time --browser-thinking-time=light \
+    --chatgpt-url --chatgpt-url=https://chatgpt.com/g/project \
+    --browser-url --browser-url=https://chatgpt.com/g/project \
+    --browser-model-strategy --browser-model-strategy=current \
+    --browser-tab --browser-tab=current \
+    --browser-attach-running --browser-attach-running=true \
+    --remote-host --remote-host=reviewer.example:9473 \
+    --remote-token --remote-token=example \
+    --remote-chrome --remote-chrome=reviewer.example:9222 \
+    --base-url --base-url=https://reviewer.example/v1 \
+    --provider --provider=azure; do
+    printf '%s\n' "$controlled_argument" >"$args_file"
+    chmod 600 "$args_file"
+
+    invoke_sentry --dry-run
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"cannot be overridden: $controlled_argument"* ]]
+  done
+}
+
 @test "empty Oracle output is never posted" {
   export ORACLE_EMPTY_OUTPUT=1
   invoke_sentry
