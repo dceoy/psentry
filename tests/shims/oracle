@@ -7,6 +7,11 @@ set -euo pipefail
 printf '%q ' "$@" >>"$GH_SHIM_STATE_DIR/oracle.log"
 printf '\n' >>"$GH_SHIM_STATE_DIR/oracle.log"
 
+{
+  printf 'ORACLE_HOME_DIR=%s\n' "${ORACLE_HOME_DIR:-}"
+  printf 'PWD=%s\n' "$(pwd)"
+} >>"$GH_SHIM_STATE_DIR/oracle-env.log"
+
 metadata_file=""
 output_file=""
 while (($#)); do

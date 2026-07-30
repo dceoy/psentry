@@ -252,6 +252,7 @@ source_configuration() {
   ORACLE_PR_SENTRY_CONFIG_FILE="${ORACLE_PR_SENTRY_CONFIG_FILE:-${XDG_CONFIG_HOME}/$PROGRAM_NAME/env}"
   ORACLE_PR_SENTRY_STATE_FILE="${ORACLE_PR_SENTRY_STATE_FILE:-${XDG_STATE_HOME}/$PROGRAM_NAME/state.json}"
   ORACLE_PR_SENTRY_CACHE_DIR="${ORACLE_PR_SENTRY_CACHE_DIR:-${XDG_CACHE_HOME}/$PROGRAM_NAME}"
+  ORACLE_PR_SENTRY_ORACLE_HOME_DIR="${ORACLE_PR_SENTRY_ORACLE_HOME_DIR:-${XDG_DATA_HOME}/$PROGRAM_NAME/oracle-home}"
   ORACLE_PR_SENTRY_RUNTIME_DIR="${ORACLE_PR_SENTRY_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}/$PROGRAM_NAME-$(id -u)}"
   ORACLE_PR_SENTRY_LOCK_FILE="${ORACLE_PR_SENTRY_LOCK_FILE:-}"
 
@@ -415,6 +416,7 @@ prepare_runtime() {
   lock_directory=$(dirname -- "$ORACLE_PR_SENTRY_LOCK_FILE")
   ensure_private_directory "$state_directory"
   ensure_private_directory "$ORACLE_PR_SENTRY_CACHE_DIR"
+  ensure_private_directory "$ORACLE_PR_SENTRY_ORACLE_HOME_DIR"
   ensure_private_directory "$ORACLE_PR_SENTRY_RUNTIME_DIR"
   ensure_private_directory "$lock_directory"
 
@@ -1613,13 +1615,17 @@ run_oracle_review() {
 
   prompt=$(<"$ORACLE_PR_SENTRY_PROMPT_PATH")
   log INFO "invoking Oracle for $repository#$number at $SNAPSHOT_HEAD"
-  if timeout --foreground --signal=TERM --kill-after=30s \
-    "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s" \
-    "$ORACLE_PR_SENTRY_ORACLE_BIN" \
-    "${oracle_args[@]}" \
-    --prompt "$prompt" \
-    --file "$metadata_file" \
-    --file "$diff_file"; then
+  if (
+    cd -- "$work_directory" &&
+      ORACLE_HOME_DIR="$ORACLE_PR_SENTRY_ORACLE_HOME_DIR" \
+        exec timeout --foreground --signal=TERM --kill-after=30s \
+        "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s" \
+        "$ORACLE_PR_SENTRY_ORACLE_BIN" \
+        "${oracle_args[@]}" \
+        --prompt "$prompt" \
+        --file "$metadata_file" \
+        --file "$diff_file"
+  ); then
     :
   else
     local oracle_status=$?

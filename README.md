@@ -49,19 +49,29 @@ to create pull request reviews. Private repositories normally require the
 
 ## Initial browser login
 
-Run the first Oracle login from the user's graphical session:
+The sentry never runs Oracle against the user's default `~/.oracle`
+configuration. It always points `ORACLE_HOME_DIR` at a dedicated, private
+directory it owns, so an ambient `~/.oracle/config.json` cannot inject a
+`promptSuffix`, `browser.remoteHost`, or other setting into a sentry run.
+Create that directory and log in through it from the user's graphical
+session:
 
 ```console
-oracle --engine browser \
+install -d -m 700 ~/.local/share/oracle-pr-sentry/oracle-home
+ORACLE_HOME_DIR=~/.local/share/oracle-pr-sentry/oracle-home \
+  oracle --engine browser \
   --browser-manual-login \
   --browser-keep-browser \
   --browser-input-timeout 120000 \
   --prompt "Initialize the oracle-pr-sentry browser profile"
 ```
 
-Complete the ChatGPT sign-in in the opened window. Oracle normally stores this
-dedicated automation profile under `~/.oracle/browser-profile`. The timer must
-run as this same Linux user.
+Complete the ChatGPT sign-in in the opened window. Oracle stores this
+dedicated automation profile under
+`~/.local/share/oracle-pr-sentry/oracle-home/browser-profile`. The timer must
+run as this same Linux user. If `XDG_DATA_HOME` is set, use
+`$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` instead, or set
+`ORACLE_PR_SENTRY_ORACLE_HOME_DIR` to a custom location before the first run.
 
 Browser automation depends on the ChatGPT Web UI and login state. UI changes,
 anti-bot challenges, subscription/model availability, and session expiry can
@@ -129,6 +139,7 @@ The sourced file takes precedence over exported environment values; the
 | `ORACLE_PR_SENTRY_ORACLE_MODEL` | `gpt-5.5-pro` | ChatGPT model requested from Oracle |
 | `ORACLE_PR_SENTRY_ORACLE_THINKING_TIME` | `extended` | Oracle browser thinking level |
 | `ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN` | `1` | Reuse Oracle's persistent manual-login profile |
+| `ORACLE_PR_SENTRY_ORACLE_HOME_DIR` | `$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` | Private `ORACLE_HOME_DIR` isolating Oracle's config and browser profile from `~/.oracle` |
 | `ORACLE_PR_SENTRY_ORACLE_ARGS_FILE` | unset | Optional file containing one literal Oracle argument per line |
 | `ORACLE_PR_SENTRY_PROMPT_PATH` | installed prompt | Independently editable review instructions |
 | `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` | `1800` | Oracle timeout in whole seconds |
