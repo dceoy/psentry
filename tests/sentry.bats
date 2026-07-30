@@ -1271,3 +1271,41 @@ setup() {
   [ ! -e "$side_effect" ]
   [[ "$output" == *"trusted file must not be group- or world-writable"* ]]
 }
+
+@test "the container always uses the image-owned review prompt" {
+  run grep -F \
+    "ORACLE_PR_SENTRY_PROMPT_PATH='/usr/local/share/oracle-pr-sentry/review-prompt.md'" \
+    "$TEST_ROOT/Containerfile"
+  [ "$status" -eq 0 ]
+
+  run grep -F \
+    '/opt/home-skel/.local/share/oracle-pr-sentry/review-prompt.md' \
+    "$TEST_ROOT/Containerfile"
+  [ "$status" -ne 0 ]
+}
+
+@test "TigerVNC listens only on the container loopback interface" {
+  run grep -F -- '-localhost yes' "$TEST_ROOT/container/entrypoint.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F -- '-localhost no' "$TEST_ROOT/container/entrypoint.sh"
+  [ "$status" -ne 0 ]
+}
+
+@test "container URL reporting inspects the running port publication" {
+  run grep -F "container inspect \"\${NAME}\"" "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F "0.configuration.publishedPorts.0" "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'NOVNC_URL' "$TEST_ROOT/container.sh"
+  [ "$status" -ne 0 ]
+}
+
+@test "container documentation describes the peer-container trust boundary" {
+  run grep -F \
+    'so run the desktop only alongside trusted containers.' \
+    "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+}

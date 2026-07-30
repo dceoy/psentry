@@ -6,7 +6,7 @@ updates through a signed-in ChatGPT Web browser session. It posts only
 comment-only GitHub reviews and remembers the exact fingerprints that GitHub
 accepted.
 
-The implementation deliberately stays close to shell glue:
+The native Linux implementation deliberately stays close to shell glue:
 
 - one Bash entrypoint;
 - `gh` for every GitHub read and write;
@@ -16,8 +16,9 @@ The implementation deliberately stays close to shell glue:
 - a `systemd --user` oneshot service and timer;
 - journald for operational logs.
 
-There is no webhook server, database, queue, repository clone, container, or
-custom GitHub client.
+There is no webhook server, database, queue, repository clone, or custom
+GitHub client. The optional Apple Container environment described below
+packages the same one-pass executable without changing that runtime model.
 
 ## Requirements
 
@@ -47,7 +48,77 @@ The GitHub credential needs read access to searched repositories and permission
 to create pull request reviews. Private repositories normally require the
 `repo` scope. The sentry does not read a token from its own configuration.
 
-## Initial browser login
+## Apple Container on macOS
+
+An optional Apple Container environment provides Linux, Chromium, XFCE, and
+noVNC on an Apple silicon Mac. Its lifecycle follows the small wrapper pattern
+used by [dceoy/acld](https://github.com/dceoy/acld).
+
+Requirements:
+
+- Apple silicon Mac
+- macOS 26 or later
+- Apple `container` CLI
+- `make` from the macOS command line developer tools
+
+Build and start the desktop:
+
+```console
+make up
+```
+
+Open the printed noVNC URL, normally
+`http://127.0.0.1:6080/vnc.html`, and enter the printed VNC password. Then
+persist GitHub and ChatGPT authentication in the container home volume:
+
+```console
+make gh-login
+make oracle-login
+```
+
+`make oracle-login` opens Chromium on the noVNC desktop. Complete the ChatGPT
+sign-in there. The image seeds
+`~/.config/oracle-pr-sentry/env` from `config/env.example`; edit it from
+`make shell` before the first sentry pass when different GitHub filters or
+Oracle settings are needed.
+
+Validate discovery, then run one pass:
+
+```console
+make dry-run
+make run
+```
+
+The container stays up to preserve its graphical browser session, but the
+sentry still runs exactly one pass per `make run`; it does not add a daemon
+loop or emulate the systemd timer. Schedule the host-side command separately
+if unattended repetition is needed.
+
+Useful targets:
+
+| Target              | Purpose                                                 |
+| ------------------- | ------------------------------------------------------- |
+| `make status`       | Show the container state and noVNC URL                  |
+| `make shell`        | Open a shell as the unprivileged `agent` user           |
+| `make down`         | Stop the container while preserving its home volume     |
+| `make build`        | Rebuild the local `linux/arm64` image                   |
+| `make pull IMAGE=…` | Pull an explicitly selected `linux/arm64` image         |
+| `make clean`        | Remove the container, image, and persistent home volume |
+
+The defaults can be overridden with Make variables such as `PORT`, `CPUS`,
+`MEMORY`, `VNC_GEOMETRY`, `VNC_PASSWORD`, `HOME_VOLUME`, and `WORKSPACE_DIR`.
+The host-side noVNC publication binds to `127.0.0.1` by default. Websockify
+still listens on the container network, where peer Apple containers can reach
+it by container IP, so run the desktop only alongside trusted containers. A
+non-loopback host publication requires an explicit `VNC_PASSWORD`; do not
+expose the unencrypted noVNC connection on an untrusted network.
+
+The named home volume contains the `gh` credential, ChatGPT browser session,
+Oracle data, sentry configuration, and sentry state. Treat it as sensitive.
+`make clean` permanently deletes that volume. The workspace bind mount is
+read-write; set `WORKSPACE_DIR` only to a directory the container may modify.
+
+## Initial browser login on native Linux
 
 The sentry never runs Oracle against the user's default `~/.oracle`
 configuration. It always points `ORACLE_HOME_DIR` at a dedicated, private
@@ -86,7 +157,7 @@ Browser automation depends on the ChatGPT Web UI and login state. UI changes,
 anti-bot challenges, subscription/model availability, and session expiry can
 interrupt it even when the sentry itself is healthy.
 
-## Install
+## Native Linux install
 
 From a checkout:
 

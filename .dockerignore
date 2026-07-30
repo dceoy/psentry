@@ -1,0 +1,13 @@
+# Keep the Apple Container build context limited to runtime files.
+*
+!.dockerignore
+!Containerfile
+!bin/
+!bin/oracle-pr-sentry
+!config/
+!config/env.example
+!container/
+!container/entrypoint.sh
+!share/
+!share/oracle-pr-sentry/
+!share/oracle-pr-sentry/review-prompt.md
