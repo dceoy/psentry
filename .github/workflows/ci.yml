@@ -23,5 +23,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes bats shellcheck shfmt
 
+      - name: Install workflow linting tools
+        env:
+          ZIZMOR_VERSION: "1.28.0"
+          YAMLLINT_VERSION: "1.38.0"
+          CHECKOV_VERSION: "3.3.8"
+          ACTIONLINT_VERSION: "1.7.12"
+        run: |
+          pipx install "zizmor==$ZIZMOR_VERSION"
+          pipx install "yamllint==$YAMLLINT_VERSION"
+          pipx install "checkov==$CHECKOV_VERSION"
+
+          mkdir -p "$HOME/.local/bin"
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          release="https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION"
+          workdir=$(mktemp -d)
+          curl -fsSLO --output-dir "$workdir" "$release/$archive"
+          curl -fsSLO --output-dir "$workdir" "$release/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          (cd -- "$workdir" && sha256sum --ignore-missing --check "actionlint_${ACTIONLINT_VERSION}_checksums.txt")
+          tar -xzf "$workdir/$archive" -C "$HOME/.local/bin" actionlint
+          rm -rf -- "$workdir"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Run static and offline checks
-        run: make check
+        run: .agents/skills/local-qa/scripts/qa.sh

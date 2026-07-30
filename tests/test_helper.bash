@@ -69,7 +69,7 @@ review_count() {
 oracle_count() {
   local log_file="$GH_SHIM_STATE_DIR/oracle.log"
   if [[ -f "$log_file" ]]; then
-    wc -l <"$log_file" | tr -d ' '
+    wc -l < "$log_file" | tr -d ' '
   else
     printf '0\n'
   fi
@@ -89,8 +89,8 @@ make_ci_failure_fixture() {
   shift
   local names
 
-  names=$(printf '%s\n' "$@" |
-    jq -Rsc 'split("\n") | map(select(length > 0))')
+  names=$(printf '%s\n' "$@" \
+    | jq -Rsc 'split("\n") | map(select(length > 0))')
   jq --argjson names "$names" '
     .statusCheckRollup = [
       $names[] | {
@@ -101,5 +101,5 @@ make_ci_failure_fixture() {
         detailsUrl: ("https://github.com/octo/example/actions/runs/" + .)
       }
     ]
-  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" >"$output"
+  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" > "$output"
 }
