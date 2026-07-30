@@ -282,7 +282,7 @@ browser, authenticate to ChatGPT, or write to GitHub:
 make check
 ```
 
-This runs ShellCheck, `shfmt -d`, and 32 Bats scenarios covering new and
+This runs ShellCheck, `shfmt -d`, and 37 Bats scenarios covering new and
 unchanged PRs, head and CI changes, draft readiness, external activity, marker
 filtering and recovery, canonical reordering, Oracle errors/timeouts/empty
 output, stale heads, atomic-state failure, concurrency, malformed state,

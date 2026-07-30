@@ -481,6 +481,22 @@ load_state() {
           )
         )
       )
+      and (
+        (has("comparison") | not)
+        or (
+          .comparison
+          | type == "object"
+          and (.fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
+          and (.head_sha | type == "string" and test("^[0-9A-Fa-f]{7,64}$"))
+          and (.draft | type == "boolean")
+          and (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
+          and (.external_digest | type == "string" and test("^[0-9a-f]{64}$"))
+          and (.recovered_at | type == "string")
+          and (.marker | type == "string")
+          and (.source == "baseline")
+        )
+      )
+      and ((has("reviewed") and has("comparison")) | not)
     )
   ' "$ORACLE_PR_SENTRY_STATE_FILE" >/dev/null; then
     die "malformed or unsupported state file: $ORACLE_PR_SENTRY_STATE_FILE"
@@ -577,8 +593,47 @@ state_mark_reviewed() {
         marker: $marker,
         publication_status: $publication_status
       }
+      | del(.prs[$key].comparison)
     ' <<<"$STATE_JSON"); then
     log ERROR "failed to update reviewed state for $key"
+    return 1
+  fi
+  STATE_JSON=$updated_state
+}
+
+state_mark_comparison() {
+  local key=$1
+  local fingerprint=$2
+  local head_sha=$3
+  local draft=$4
+  local ci_digest=$5
+  local external_digest=$6
+  local timestamp=$7
+  local marker=$8
+
+  local updated_state
+
+  if ! updated_state=$(jq -cS \
+    --arg key "$key" \
+    --arg fingerprint "$fingerprint" \
+    --arg head_sha "$head_sha" \
+    --argjson draft "$draft" \
+    --arg ci_digest "$ci_digest" \
+    --arg external_digest "$external_digest" \
+    --arg timestamp "$timestamp" \
+    --arg marker "$marker" '
+      .prs[$key].comparison = {
+        fingerprint: $fingerprint,
+        head_sha: $head_sha,
+        draft: $draft,
+        ci_digest: $ci_digest,
+        external_digest: $external_digest,
+        recovered_at: $timestamp,
+        marker: $marker,
+        source: "baseline"
+      }
+    ' <<<"$STATE_JSON"); then
+    log ERROR "failed to update comparison state for $key"
     return 1
   fi
   STATE_JSON=$updated_state
@@ -1253,7 +1308,7 @@ publish_review() {
 process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
-  local reviewed_fingerprint reviewed_head reviewed_external
+  local comparison_fingerprint comparison_head comparison_external
   local observed_head observed_ci observed_ci_json observed_draft
   local new_ci_failure_count observation_changed=0 reason publish_status
 
@@ -1288,9 +1343,15 @@ process_candidate() {
   fi
 
   old_entry=$(jq -c --arg key "$SNAPSHOT_KEY" '.prs[$key] // {}' <<<"$STATE_JSON") || return 1
-  reviewed_fingerprint=$(jq -r '.reviewed.fingerprint // ""' <<<"$old_entry") || return 1
-  reviewed_head=$(jq -r '.reviewed.head_sha // ""' <<<"$old_entry") || return 1
-  reviewed_external=$(jq -r '.reviewed.external_digest // ""' <<<"$old_entry") || return 1
+  comparison_fingerprint=$(jq -r \
+    '.comparison.fingerprint // .reviewed.fingerprint // ""' \
+    <<<"$old_entry") || return 1
+  comparison_head=$(jq -r \
+    '.comparison.head_sha // .reviewed.head_sha // ""' \
+    <<<"$old_entry") || return 1
+  comparison_external=$(jq -r \
+    '.comparison.external_digest // .reviewed.external_digest // ""' \
+    <<<"$old_entry") || return 1
   observed_head=$(jq -r '.observed.head_sha // ""' <<<"$old_entry") || return 1
   observed_ci=$(jq -r '.observed.ci_digest // .reviewed.ci_digest // ""' <<<"$old_entry") || return 1
   observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<<"$old_entry") || return 1
@@ -1319,12 +1380,17 @@ process_candidate() {
     observation_changed=1
   fi
 
-  if [[ -z "$reviewed_fingerprint" ]] && latest_baseline_matches_snapshot; then
-    log INFO "latest GitHub baseline matches $SNAPSHOT_KEY; recovering observed state"
+  if [[ -z "$comparison_fingerprint" ]] && latest_baseline_matches_snapshot; then
+    log INFO "latest GitHub baseline matches $SNAPSHOT_KEY; recovering comparison state"
     if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
       if ! state_observe \
         "$SNAPSHOT_KEY" "$SNAPSHOT_URL" "$SNAPSHOT_HEAD" "$SNAPSHOT_DRAFT" \
         "$SNAPSHOT_CI_DIGEST" "$SNAPSHOT_CI_JSON" "$now" ||
+        ! state_mark_comparison \
+          "$SNAPSHOT_KEY" "$SNAPSHOT_INPUT_FINGERPRINT" "$SNAPSHOT_HEAD" \
+          "$SNAPSHOT_DRAFT" "$SNAPSHOT_CI_DIGEST" \
+          "$SNAPSHOT_EXTERNAL_DIGEST" "$now" \
+          "$SNAPSHOT_LATEST_PUBLICATION_MARKER" ||
         ! persist_state; then
         return 1
       fi
@@ -1352,25 +1418,25 @@ process_candidate() {
   log INFO "eligible $SNAPSHOT_KEY at $SNAPSHOT_HEAD"
 
   if [[ "$observed_draft" == "true" ||
-    (-z "$reviewed_fingerprint" &&
+    (-z "$comparison_fingerprint" &&
     "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
     "$SNAPSHOT_LATEST_EVENT_DRAFT" == "true") ]]; then
     reason="draft-to-ready"
-  elif [[ -z "$reviewed_fingerprint" &&
+  elif [[ -z "$comparison_fingerprint" &&
     "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
     "$SNAPSHOT_LATEST_EVENT_DRAFT" == "false" &&
     "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" != "$SNAPSHOT_CI_DIGEST" ]] &&
     ((SNAPSHOT_CI_FAILURE_COUNT > 0)); then
     reason="ci-failure"
-  elif [[ -z "$reviewed_fingerprint" ]]; then
+  elif [[ -z "$comparison_fingerprint" ]]; then
     reason="new-pr"
-  elif [[ "$reviewed_head" != "$SNAPSHOT_HEAD" ]]; then
+  elif [[ "$comparison_head" != "$SNAPSHOT_HEAD" ]]; then
     reason="head-sha-changed"
   elif ((new_ci_failure_count > 0)); then
     reason="ci-failure"
-  elif [[ "$reviewed_fingerprint" == "$SNAPSHOT_FINGERPRINT" ]]; then
+  elif [[ "$comparison_fingerprint" == "$SNAPSHOT_FINGERPRINT" ]]; then
     reason=""
-  elif [[ "$reviewed_external" != "$SNAPSHOT_EXTERNAL_DIGEST" ]]; then
+  elif [[ "$comparison_external" != "$SNAPSHOT_EXTERNAL_DIGEST" ]]; then
     reason="external-activity"
   else
     reason=""

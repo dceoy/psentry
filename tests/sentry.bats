@@ -189,6 +189,72 @@ setup() {
   [[ "$output" == *"ci-failure"* ]]
 }
 
+@test "a recovered CI baseline preserves partial-recovery comparison state" {
+  three_failures="$BATS_TEST_TMPDIR/three-failures.json"
+  two_failures="$BATS_TEST_TMPDIR/two-failures.json"
+  one_failure="$BATS_TEST_TMPDIR/one-failure.json"
+  make_ci_failure_fixture "$three_failures" lint test typecheck
+  make_ci_failure_fixture "$two_failures" lint test
+  make_ci_failure_fixture "$one_failure" test
+
+  export GH_FIXTURE="$three_failures"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$two_failures"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  jq -e '
+    .prs["octo/example#1"].comparison.source == "baseline"
+    and (.prs["octo/example#1"] | has("reviewed") | not)
+  ' "$ORACLE_PR_SENTRY_STATE_FILE"
+
+  export GH_FIXTURE="$one_failure"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
+@test "a recovered CI baseline preserves success comparison state" {
+  two_failures="$BATS_TEST_TMPDIR/two-failures.json"
+  one_failure="$BATS_TEST_TMPDIR/one-failure.json"
+  make_ci_failure_fixture "$two_failures" lint test
+  make_ci_failure_fixture "$one_failure" test
+
+  export GH_FIXTURE="$two_failures"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  export GH_FIXTURE="$one_failure"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(baseline_count)" -eq 1 ]
+
+  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+
+  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
 @test "a draft baseline survives state loss before the PR becomes ready" {
   invoke_sentry
   [ "$status" -eq 0 ]

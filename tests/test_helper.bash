@@ -79,3 +79,23 @@ baseline_count() {
     printf '0\n'
   fi
 }
+
+make_ci_failure_fixture() {
+  local output=$1
+  shift
+  local names
+
+  names=$(printf '%s\n' "$@" |
+    jq -Rsc 'split("\n") | map(select(length > 0))')
+  jq --argjson names "$names" '
+    .statusCheckRollup = [
+      $names[] | {
+        name: .,
+        workflowName: "CI",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: ("https://github.com/octo/example/actions/runs/" + .)
+      }
+    ]
+  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" >"$output"
+}
