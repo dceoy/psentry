@@ -1181,7 +1181,7 @@ setup() {
   export ORACLE_SLEEP=5
   export ORACLE_SLEEP_PR_NUMBER=2
 
-  run /usr/bin/timeout --signal=TERM --kill-after=1s 1s "$SENTRY_UNDER_TEST"
+  run timeout --signal=TERM --kill-after=1s 1s "$SENTRY_UNDER_TEST"
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 0 ]

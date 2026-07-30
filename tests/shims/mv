@@ -10,4 +10,4 @@ if [[ "${FAIL_STATE_MV:-0}" == 1 ]]; then
     fi
   done
 fi
-exec /usr/bin/mv "$@"
+exec "$SYSTEM_MV" "$@"
