@@ -791,6 +791,23 @@ setup() {
   [[ "$recorded_pwd" != "$scratch_directory"* ]]
 }
 
+@test "the manual-login browser profile is pinned to the isolated Oracle home" {
+  install -d -m 700 -- "$TEST_HOME/.oracle/browser-profile"
+  printf '%s\n' 'ambient chatgpt session' \
+    >"$TEST_HOME/.oracle/browser-profile/marker"
+
+  export ORACLE_BROWSER_PROFILE_DIR="$BATS_TEST_TMPDIR/attacker-profile"
+  install -d -m 700 -- "$ORACLE_BROWSER_PROFILE_DIR"
+
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  expected_profile_dir="$TEST_HOME/.local/share/oracle-pr-sentry/oracle-home/browser-profile"
+  grep -q -- "--browser-manual-login-profile-dir $expected_profile_dir" \
+    "$GH_SHIM_STATE_DIR/oracle.log"
+  grep -qx 'ORACLE_BROWSER_PROFILE_DIR=' "$GH_SHIM_STATE_DIR/oracle-env.log"
+}
+
 @test "Oracle wait controls and file-input aliases cannot be overridden" {
   args_directory="$TEST_HOME/.config/oracle-pr-sentry"
   args_file="$args_directory/oracle-args"

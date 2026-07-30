@@ -9,6 +9,7 @@ printf '\n' >>"$GH_SHIM_STATE_DIR/oracle.log"
 
 {
   printf 'ORACLE_HOME_DIR=%s\n' "${ORACLE_HOME_DIR:-}"
+  printf 'ORACLE_BROWSER_PROFILE_DIR=%s\n' "${ORACLE_BROWSER_PROFILE_DIR:-}"
   printf 'PWD=%s\n' "$(pwd)"
 } >>"$GH_SHIM_STATE_DIR/oracle-env.log"
 

@@ -53,21 +53,30 @@ The sentry never runs Oracle against the user's default `~/.oracle`
 configuration. It always points `ORACLE_HOME_DIR` at a dedicated, private
 directory it owns, so an ambient `~/.oracle/config.json` cannot inject a
 `promptSuffix`, `browser.remoteHost`, or other setting into a sentry run.
-Create that directory and log in through it from the user's graphical
-session:
+`ORACLE_HOME_DIR` does not, by itself, relocate Oracle's manual-login browser
+profile: Oracle resolves that from `--browser-manual-login-profile-dir`, then
+an inherited `ORACLE_BROWSER_PROFILE_DIR`, and otherwise falls back to
+`~/.oracle/browser-profile`. Pin the profile directory explicitly with
+`--browser-manual-login-profile-dir` (and clear any ambient
+`ORACLE_BROWSER_PROFILE_DIR`) so login state cannot mix with the user's
+ordinary Oracle/ChatGPT profile. Create the directory and log in through it
+from the user's graphical session:
 
 ```console
 install -d -m 700 ~/.local/share/oracle-pr-sentry/oracle-home
-ORACLE_HOME_DIR=~/.local/share/oracle-pr-sentry/oracle-home \
+env -u ORACLE_BROWSER_PROFILE_DIR \
+  ORACLE_HOME_DIR=~/.local/share/oracle-pr-sentry/oracle-home \
   oracle --engine browser \
   --browser-manual-login \
+  --browser-manual-login-profile-dir \
+    ~/.local/share/oracle-pr-sentry/oracle-home/browser-profile \
   --browser-keep-browser \
   --browser-input-timeout 120000 \
   --prompt "Initialize the oracle-pr-sentry browser profile"
 ```
 
-Complete the ChatGPT sign-in in the opened window. Oracle stores this
-dedicated automation profile under
+Complete the ChatGPT sign-in in the opened window. This pins the dedicated
+automation profile under
 `~/.local/share/oracle-pr-sentry/oracle-home/browser-profile`. The timer must
 run as this same Linux user. If `XDG_DATA_HOME` is set, use
 `$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` instead, or set

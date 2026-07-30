@@ -1602,6 +1602,7 @@ run_oracle_review() {
     --browser-thinking-time "$ORACLE_PR_SENTRY_ORACLE_THINKING_TIME"
     --browser-timeout "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s"
     --browser-max-concurrent-tabs 1
+    --browser-manual-login-profile-dir "$ORACLE_PR_SENTRY_ORACLE_HOME_DIR/browser-profile"
     --no-background
     --wait
     --write-output "$output_file"
@@ -1639,6 +1640,7 @@ run_oracle_review() {
   log INFO "invoking Oracle for $repository#$number at $SNAPSHOT_HEAD"
   if (
     cd -- "$work_directory" &&
+      unset ORACLE_BROWSER_PROFILE_DIR &&
       ORACLE_HOME_DIR="$ORACLE_PR_SENTRY_ORACLE_HOME_DIR" \
         exec timeout --foreground --signal=TERM --kill-after=30s \
         "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s" \
