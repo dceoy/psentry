@@ -170,6 +170,11 @@ browser engine, configured model, fresh local tab, single-tab concurrency,
 attached bounded foreground execution, and write-output path remain fixed by
 the executable.
 
+Every line must be an option or the value of the option immediately before
+it: a bare token that is not consuming a preceding option's value (including
+an Oracle subcommand such as `session` or `restart`) is rejected, as is a
+file that ends with an option still awaiting its value.
+
 If `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` is raised above 30 minutes, also raise
 the service's `RuntimeMaxSec` and `TimeoutStartSec`, then reinstall the unit.
 systemd ignores `RuntimeMaxSec` while a `Type=oneshot` service is activating,

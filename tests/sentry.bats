@@ -884,6 +884,88 @@ setup() {
   done
 }
 
+@test "Oracle top-level subcommands and other positional tokens cannot be smuggled in" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  for controlled_argument in \
+    session restart serve project-sources bridge tui abc123; do
+    printf '%s\n' "$controlled_argument" >"$args_file"
+    chmod 600 "$args_file"
+
+    invoke_sentry --dry-run
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"accepts option values only, not positional tokens: $controlled_argument"* ]]
+  done
+}
+
+@test "a bare token after a self-contained flag=value line is rejected" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  printf '%s\n' "--browser-auto-reattach-delay=30s" "2m" >"$args_file"
+  chmod 600 -- "$args_file"
+
+  invoke_sentry --dry-run
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"accepts option values only, not positional tokens: 2m"* ]]
+}
+
+@test "a second bare token chained after a consumed flag value is rejected" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  printf '%s\n' "--browser-auto-reattach-delay" "30s" "restart" >"$args_file"
+  chmod 600 -- "$args_file"
+
+  invoke_sentry --dry-run
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"accepts option values only, not positional tokens: restart"* ]]
+}
+
+@test "an arguments file ending mid-option is rejected" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  printf '%s\n' "--browser-auto-reattach-delay" >"$args_file"
+  chmod 600 -- "$args_file"
+
+  invoke_sentry --dry-run
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ends with an option awaiting its value: --browser-auto-reattach-delay"* ]]
+}
+
+@test "a flag and its value on separate lines still reach Oracle" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  printf '%s\n' \
+    "--browser-auto-reattach-delay" "30s" \
+    "--browser-auto-reattach-interval" "2m" \
+    >"$args_file"
+  chmod 600 -- "$args_file"
+
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  grep -q -- '--browser-auto-reattach-delay 30s --browser-auto-reattach-interval 2m' \
+    "$GH_SHIM_STATE_DIR/oracle.log"
+}
+
 @test "empty Oracle output is never posted" {
   export ORACLE_EMPTY_OUTPUT=1
   invoke_sentry

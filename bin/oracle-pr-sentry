@@ -346,6 +346,8 @@ validate_dependencies() {
 
 load_oracle_extra_args() {
   local argument
+  local previous_expects_value=0
+  local pending_flag=""
 
   ORACLE_EXTRA_ARGS=()
   [[ -n "$ORACLE_PR_SENTRY_ORACLE_ARGS_FILE" ]] || return 0
@@ -353,6 +355,13 @@ load_oracle_extra_args() {
   while IFS= read -r argument || [[ -n "$argument" ]]; do
     argument=${argument%$'\r'}
     [[ -n "$argument" && "$argument" != \#* ]] || continue
+    if [[ "$argument" != -* ]]; then
+      ((previous_expects_value)) ||
+        die "Oracle argument file accepts option values only, not positional tokens: $argument"
+      previous_expects_value=0
+      ORACLE_EXTRA_ARGS+=("$argument")
+      continue
+    fi
     case "$argument" in
       --)
         die "Oracle argument is controlled by the sentry and cannot be overridden: $argument"
@@ -391,8 +400,18 @@ load_oracle_extra_args() {
         die "Oracle argument is controlled by the sentry and cannot be overridden: $argument"
         ;;
     esac
+    if [[ "$argument" == *=* ]]; then
+      previous_expects_value=0
+    else
+      previous_expects_value=1
+      pending_flag=$argument
+    fi
     ORACLE_EXTRA_ARGS+=("$argument")
   done <"$ORACLE_PR_SENTRY_ORACLE_ARGS_FILE"
+
+  if ((previous_expects_value)); then
+    die "Oracle argument file ends with an option awaiting its value: $pending_flag"
+  fi
 }
 
 prepare_runtime() {
