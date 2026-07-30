@@ -28,8 +28,8 @@ git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' \
   | xargs -0 -t yamllint -d '{"extends": "relaxed", "rules": {"line-length": "disable"}}'
 checkov --framework=all --output=github_failed_only --directory=.
 
-# Fail if any formatter or auto-fixer above left tracked files modified
-if ! git diff --exit-code; then
+# CI-only: locally this would fail on the developer's own unstaged edits.
+if [ "${CI:-}" = "true" ] && ! git diff --exit-code; then
   echo 'error: formatting/auto-fix left tracked files modified; commit the changes shown above' >&2
   exit 1
 fi
