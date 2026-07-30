@@ -48,7 +48,8 @@ setup_sentry_test() {
     ORACLE_EXIT_STATUS \
     ORACLE_PR_SENTRY_ORACLE_ARGS_FILE \
     ORACLE_REVIEW_TEXT \
-    ORACLE_SLEEP
+    ORACLE_SLEEP \
+    ORACLE_SLEEP_PR_NUMBER
 }
 
 invoke_sentry() {

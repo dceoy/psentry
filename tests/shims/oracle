@@ -7,11 +7,18 @@ set -euo pipefail
 printf '%q ' "$@" >>"$GH_SHIM_STATE_DIR/oracle.log"
 printf '\n' >>"$GH_SHIM_STATE_DIR/oracle.log"
 
+metadata_file=""
 output_file=""
 while (($#)); do
   case "$1" in
     --write-output)
       output_file=$2
+      shift 2
+      ;;
+    --file)
+      if [[ -z "$metadata_file" ]]; then
+        metadata_file=$2
+      fi
       shift 2
       ;;
     *)
@@ -26,7 +33,10 @@ done
 }
 
 if [[ -n "${ORACLE_SLEEP:-}" ]]; then
-  sleep "$ORACLE_SLEEP"
+  if [[ -z "${ORACLE_SLEEP_PR_NUMBER:-}" ]] ||
+    [[ "$(jq -r '.number // ""' "$metadata_file")" == "$ORACLE_SLEEP_PR_NUMBER" ]]; then
+    sleep "$ORACLE_SLEEP"
+  fi
 fi
 if [[ "${ORACLE_EXIT_STATUS:-0}" != 0 ]]; then
   exit "$ORACLE_EXIT_STATUS"

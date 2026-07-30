@@ -24,7 +24,10 @@ The sentry performs two bounded searches, ordered by most recent update so
 newly active pull requests cannot remain behind a fixed set of older results:
 `draft:false` supplies eligible work, while `draft:true` supplies observations
 needed to recognize a later draft-to-ready transition. Drafts are never passed
-to Oracle.
+to Oracle. Before each candidate attempt, the sentry atomically checkpoints
+that candidate as a rotation cursor. If the pass is interrupted, the next pass
+starts after the cursor; after a complete pass, the cursor points at the final
+candidate and the next pass returns to the original recency order.
 
 ## Normalized snapshot schema
 
@@ -159,6 +162,7 @@ keys:
 ```json
 {
   "version": 1,
+  "candidate_cursor": "owner/repository#123",
   "prs": {
     "owner/repository#123": {
       "url": "https://github.com/owner/repository/pull/123",

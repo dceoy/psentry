@@ -133,7 +133,7 @@ The sourced file takes precedence over exported environment values; the
 | `ORACLE_PR_SENTRY_PROMPT_PATH` | installed prompt | Independently editable review instructions |
 | `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` | `1800` | Oracle timeout in whole seconds |
 | `ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES` | `60000` | Maximum generated review plus marker |
-| `ORACLE_PR_SENTRY_STATE_FILE` | `$XDG_STATE_HOME/oracle-pr-sentry/state.json` | Persistent state document |
+| `ORACLE_PR_SENTRY_STATE_FILE` | `$XDG_STATE_HOME/oracle-pr-sentry/state.json` | Persistent review state and candidate-rotation cursor |
 | `ORACLE_PR_SENTRY_RETENTION_DAYS` | `30` | Age before unseen/closed/ineligible entries are pruned |
 | `ORACLE_PR_SENTRY_CACHE_DIR` | `$XDG_CACHE_HOME/oracle-pr-sentry` | Private cache directory |
 | `ORACLE_PR_SENTRY_RUNTIME_DIR` | `$XDG_RUNTIME_DIR/oracle-pr-sentry-$UID` | Lock and secure temporary workspace |
@@ -209,6 +209,10 @@ preserves configuration, state, cache, Oracle sessions, and browser profiles.
 The executable uses a non-blocking global `flock`. If a timer activation
 overlaps an existing pass, the new process logs that another invocation holds
 the lock and exits successfully without opening another browser session.
+Before each candidate attempt, the sentry checkpoints a cursor in its state
+file. If a slow Oracle run consumes the remaining service budget, the next
+activation starts after that candidate, while completed passes naturally
+return to most-recently-updated order.
 
 ### Unattended user services
 
@@ -285,7 +289,7 @@ browser, authenticate to ChatGPT, or write to GitHub:
 make check
 ```
 
-This runs ShellCheck, `shfmt -d`, and 37 Bats scenarios covering new and
+This runs ShellCheck, `shfmt -d`, and Bats scenarios covering new and
 unchanged PRs, head and CI changes, draft readiness, external activity, marker
 filtering and recovery, canonical reordering, Oracle errors/timeouts/empty
 output, stale heads, atomic-state failure, concurrency, malformed state,

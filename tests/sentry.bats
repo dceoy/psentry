@@ -786,6 +786,26 @@ setup() {
   done
 }
 
+@test "Oracle session execution controls cannot be overridden" {
+  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
+  args_file="$args_directory/oracle-args"
+  install -d -m 700 -- "$args_directory"
+  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
+
+  for controlled_argument in \
+    --status --status=current \
+    --session --session=existing \
+    --exec-session --exec-session=existing; do
+    printf '%s\n' "$controlled_argument" >"$args_file"
+    chmod 600 "$args_file"
+
+    invoke_sentry --dry-run
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"cannot be overridden: $controlled_argument"* ]]
+  done
+}
+
 @test "empty Oracle output is never posted" {
   export ORACLE_EMPTY_OUTPUT=1
   invoke_sentry
@@ -914,6 +934,32 @@ setup() {
   processing_order=$(grep -o 'eligible octo/example#[0-9]*' <<<"$output" |
     grep -o '[0-9]*$' | tr '\n' ',')
   [ "$processing_order" = "2,1," ]
+}
+
+@test "an interrupted slow candidate rotates behind later candidates on the next pass" {
+  export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
+  export GH_READY_NUMBERS=
+  export GH_DRAFT_NUMBERS=
+  export GH_FIXTURE_1="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE_2="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export ORACLE_SLEEP=5
+  export ORACLE_SLEEP_PR_NUMBER=2
+
+  run /usr/bin/timeout --signal=TERM --kill-after=1s 1s "$SENTRY_UNDER_TEST"
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  jq -e '.candidate_cursor == "octo/example#2"' \
+    "$ORACLE_PR_SENTRY_STATE_FILE"
+
+  export ORACLE_SLEEP=2
+  export ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME=1
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 1 ]
+  jq -e '.prs["octo/example#1"].reviewed.fingerprint != null' \
+    "$ORACLE_PR_SENTRY_STATE_FILE"
 }
 
 @test "dry-run leaves configured storage and state permissions unchanged" {

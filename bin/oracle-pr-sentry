@@ -379,7 +379,9 @@ load_oracle_extra_args() {
         --browser-model-strategy=* | --browser-tab | --browser-tab=* | \
         --browser-attach-running | --browser-attach-running=* | \
         --remote-host | --remote-host=* | --remote-token | --remote-token=* | \
-        --remote-chrome | --remote-chrome=* | --youtube | --youtube=*)
+        --remote-chrome | --remote-chrome=* | --status | --status=* | \
+        --session | --session=* | --exec-session | --exec-session=* | \
+        --youtube | --youtube=*)
         die "Oracle argument is controlled by the sentry and cannot be overridden: $argument"
         ;;
     esac
@@ -450,6 +452,14 @@ load_state() {
     type == "object"
     and .version == 1
     and (.prs | type == "object")
+    and (
+      (has("candidate_cursor") | not)
+      or (
+        .candidate_cursor
+        | type == "string"
+        and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
+      )
+    )
     and all(
       .prs[];
       type == "object"
@@ -572,6 +582,27 @@ persist_state() {
     log ERROR "failed to atomically replace state file"
     return 1
   fi
+}
+
+checkpoint_candidate_cursor() {
+  local candidate=$1
+  local key repository number updated_state
+
+  repository=$(jq -r '.repository.nameWithOwner // ""' <<<"$candidate") ||
+    return 1
+  number=$(jq -r '.number // 0' <<<"$candidate") || return 1
+  [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
+    "$number" =~ ^[1-9][0-9]*$ ]] ||
+    return 1
+  key="$repository#$number"
+
+  if ! updated_state=$(jq -cS --arg key "$key" \
+    '.candidate_cursor = $key' <<<"$STATE_JSON"); then
+    log ERROR "failed to update candidate cursor for $key"
+    return 1
+  fi
+  STATE_JSON=$updated_state
+  persist_state
 }
 
 state_observe() {
@@ -722,6 +753,7 @@ discover_candidates() {
   local ready_file="$RUN_TMP/ready.json"
   local drafts_file="$RUN_TMP/drafts.json"
   local candidates_file="$RUN_TMP/candidates.json"
+  local candidate_cursor
   local common_args=(
     --owner "$ORACLE_PR_SENTRY_GITHUB_OWNER"
     --author "$ORACLE_PR_SENTRY_GITHUB_AUTHOR"
@@ -747,8 +779,10 @@ discover_candidates() {
     return 1
   fi
 
-  if ! jq -sS '
-    (
+  candidate_cursor=$(jq -r '.candidate_cursor // ""' <<<"$STATE_JSON") ||
+    return 1
+  if ! jq -sS --arg candidate_cursor "$candidate_cursor" '
+    ((
       [.[0][] | . + {_search_eligible: true}]
       + [.[1][] | . + {_search_eligible: false}]
     )
@@ -756,7 +790,19 @@ discover_candidates() {
     | group_by([.repository.nameWithOwner, .number])
     | map(last)
     | sort_by(.updatedAt)
-    | reverse
+    | reverse) as $candidates
+    | (
+        $candidates
+        | map(.repository.nameWithOwner + "#" + (.number | tostring))
+        | index($candidate_cursor)
+      ) as $cursor_index
+    | if $cursor_index == null
+      then $candidates
+      else (
+        $candidates[($cursor_index + 1):]
+        + $candidates[:($cursor_index + 1)]
+      )
+      end
   ' "$ready_file" "$drafts_file" >"$candidates_file"; then
     log ERROR "failed to normalize GitHub discovery results"
     return 1
@@ -2101,6 +2147,11 @@ run_sentry() {
 
   for candidate in "${candidates[@]}"; do
     ((processed += 1))
+    if ((ORACLE_PR_SENTRY_DRY_RUN == 0)) &&
+      ! checkpoint_candidate_cursor "$candidate"; then
+      ((failures += 1))
+      log ERROR "candidate rotation checkpoint failed; continuing without a durable cursor"
+    fi
     if ! process_candidate "$candidate"; then
       ((failures += 1))
       log ERROR "candidate failed; continuing with remaining PRs"
