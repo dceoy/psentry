@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${GH_SHIM_STATE_DIR:?GH_SHIM_STATE_DIR is required}"
+
+printf '%q ' "$@" >>"$GH_SHIM_STATE_DIR/oracle.log"
+printf '\n' >>"$GH_SHIM_STATE_DIR/oracle.log"
+
+{
+  printf 'ORACLE_HOME_DIR=%s\n' "${ORACLE_HOME_DIR:-}"
+  printf 'ORACLE_BROWSER_PROFILE_DIR=%s\n' "${ORACLE_BROWSER_PROFILE_DIR:-}"
+  printf 'PWD=%s\n' "$(pwd)"
+} >>"$GH_SHIM_STATE_DIR/oracle-env.log"
+
+metadata_file=""
+output_file=""
+while (($#)); do
+  case "$1" in
+    --write-output)
+      output_file=$2
+      shift 2
+      ;;
+    --file)
+      if [[ -z "$metadata_file" ]]; then
+        metadata_file=$2
+      fi
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$output_file" ]] || {
+  printf 'missing --write-output\n' >&2
+  exit 2
+}
+
+if [[ -n "$metadata_file" ]]; then
+  cp -- "$metadata_file" "$GH_SHIM_STATE_DIR/oracle-metadata.json"
+fi
+
+if [[ -n "${ORACLE_SLEEP:-}" ]]; then
+  if [[ -z "${ORACLE_SLEEP_PR_NUMBER:-}" ]] ||
+    [[ "$(jq -r '.number // ""' "$metadata_file")" == "$ORACLE_SLEEP_PR_NUMBER" ]]; then
+    sleep "$ORACLE_SLEEP"
+  fi
+fi
+if [[ "${ORACLE_EXIT_STATUS:-0}" != 0 ]]; then
+  exit "$ORACLE_EXIT_STATUS"
+fi
+if [[ "${ORACLE_EMPTY_OUTPUT:-0}" == 1 ]]; then
+  : >"$output_file"
+else
+  printf '%s\n' "${ORACLE_REVIEW_TEXT:-No blocking findings were found.}" >"$output_file"
+fi

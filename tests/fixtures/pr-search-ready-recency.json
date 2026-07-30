@@ -1,0 +1,16 @@
+[
+  {
+    "number": 1,
+    "repository": {"nameWithOwner": "octo/example"},
+    "url": "https://github.com/octo/example/pull/1",
+    "isDraft": false,
+    "updatedAt": "2026-07-20T00:00:00Z"
+  },
+  {
+    "number": 2,
+    "repository": {"nameWithOwner": "octo/example"},
+    "url": "https://github.com/octo/example/pull/2",
+    "isDraft": false,
+    "updatedAt": "2026-07-29T00:00:00Z"
+  }
+]

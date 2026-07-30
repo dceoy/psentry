@@ -1,0 +1,20 @@
+[
+  {
+    "number": 103,
+    "repository": {"nameWithOwner": "octo/example"},
+    "url": "https://github.com/octo/example/pull/103",
+    "isDraft": false
+  },
+  {
+    "number": 102,
+    "repository": {"nameWithOwner": "octo/example"},
+    "url": "https://github.com/octo/example/pull/102",
+    "isDraft": false
+  },
+  {
+    "number": 101,
+    "repository": {"nameWithOwner": "octo/example"},
+    "url": "https://github.com/octo/example/pull/101",
+    "isDraft": false
+  }
+]

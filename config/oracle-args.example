@@ -1,0 +1,8 @@
+# One literal Oracle argument per line; no shell parsing is performed.
+# Copy to ~/.config/oracle-pr-sentry/oracle-args and chmod 600.
+--browser-auto-reattach-delay
+30s
+--browser-auto-reattach-interval
+2m
+--browser-auto-reattach-timeout
+2m
