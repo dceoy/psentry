@@ -17,6 +17,7 @@ RUN_TMP=""
 RUN_TMP_OWNED=0
 STATE_JSON=""
 SENTRY_LOGIN=""
+SNAPSHOT_MARKER=""
 BASELINE_MARKER=""
 ORACLE_EXTRA_ARGS=()
 
@@ -470,39 +471,30 @@ load_state() {
         and (.head_sha | type == "string")
         and (.draft | type == "boolean")
         and (.last_seen_at | type == "string")
+        and (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
         and (
-          (has("ci_digest") | not)
-          or (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
-        )
-        and (
-          (has("ci_failures") | not)
-          or (
-            .ci_failures
-            | type == "array"
-            and all(
-              .[];
-              type == "object"
-              and (.name | type == "string")
-              and (.workflow | type == "string")
-              and (.result | type == "string")
-              and (.details_url | type == "string")
+          .ci_failures
+          | type == "array"
+          and all(
+            .[];
+            type == "object"
+            and (.name | type == "string")
+            and (.workflow | type == "string")
+            and (.result | type == "string")
+            and (.details_url | type == "string")
+            and (
+              .producer
+              | type == "object"
               and (
-                (has("producer") | not)
+                (
+                  .kind == "check_run"
+                  and (.workflow_id | type) == "string"
+                  and (.check_suite_id | type) == "string"
+                  and (.app_id | type) == "string"
+                )
                 or (
-                  .producer
-                  | type == "object"
-                  and (
-                    (
-                      .kind == "check_run"
-                      and (.workflow_id | type) == "string"
-                      and (.check_suite_id | type) == "string"
-                      and (.app_id | type) == "string"
-                    )
-                    or (
-                      .kind == "status_context"
-                      and (.actor | type) == "string"
-                    )
-                  )
+                  .kind == "status_context"
+                  and (.actor | type) == "string"
                 )
               )
             )
@@ -515,14 +507,8 @@ load_state() {
           .reviewed
           | type == "object"
           and (.fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
-          and (
-            (has("input_fingerprint") | not)
-            or (.input_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
-          )
-          and (
-            (has("context_fingerprint") | not)
-            or (.context_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
-          )
+          and (.input_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
+          and (.context_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
           and (.head_sha | type == "string" and test("^[0-9A-Fa-f]{7,64}$"))
           and (.draft == false)
           and (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
@@ -541,10 +527,7 @@ load_state() {
           .comparison
           | type == "object"
           and (.fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
-          and (
-            (has("context_fingerprint") | not)
-            or (.context_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
-          )
+          and (.context_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))
           and (.head_sha | type == "string" and test("^[0-9A-Fa-f]{7,64}$"))
           and (.draft | type == "boolean")
           and (.ci_digest | type == "string" and test("^[0-9a-f]{64}$"))
@@ -1055,11 +1038,9 @@ collect_snapshot() {
             | select($ci_failures == $normalized_ci_failures)
             | del(.encoded_ci_failures)
             | . + {
-                version: 5,
                 kind: "review",
                 draft: false,
                 ci_failures: $normalized_ci_failures,
-                ci_digest: "",
                 marker: (
                   "<!-- oracle-pr-sentry:v5 identity=" + .identity
                   + " kind=review fingerprint=" + .fingerprint
@@ -1073,180 +1054,52 @@ collect_snapshot() {
                 )
               }
           ) catch null) // null
-        ) as $v5_review
-        | if $v5_review != null
-          then $v5_review
-          else
-        (
-          (try (
-            .body
-            | capture(
-                "(?:^|\\n)<!-- oracle-pr-sentry:v5 identity=(?<identity>[A-Za-z0-9._-]+) kind=baseline input=(?<input_fingerprint>[0-9a-f]{64}) context=(?<context_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) draft=(?<draft>true|false) failures=(?<encoded_ci_failures>[A-Za-z0-9+/]+={0,2}) external=(?<external_digest>[0-9a-f]{64}) -->\\n?$"
-              )
-            | .event_sequence |= tonumber
-            | .draft |= (. == "true")
-            | .encoded_ci_failures as $encoded_ci_failures
-            | ($encoded_ci_failures | @base64d | fromjson) as $ci_failures
-            | select(
-                ($ci_failures | type) == "array"
-                and all(
-                  $ci_failures[];
-                  type == "object"
-                  and keys == ["name", "workflow"]
-                  and (.name | type == "string")
-                  and (.workflow | type == "string")
-                )
-              )
-            | ($ci_failures | map({workflow, name}) | unique_by([.workflow, .name])) as $normalized_ci_failures
-            | select($ci_failures == $normalized_ci_failures)
-            | del(.encoded_ci_failures)
-            | . + {
-                version: 5,
-                kind: "baseline",
-                fingerprint: "",
-                ci_failures: $normalized_ci_failures,
-                ci_digest: "",
-                marker: (
-                  "<!-- oracle-pr-sentry:v5 identity=" + .identity
-                  + " kind=baseline input=" + .input_fingerprint
-                  + " context=" + .context_fingerprint
-                  + " head=" + .head_sha
-                  + " event=" + (.event_sequence | tostring)
-                  + " draft=" + (.draft | tostring)
-                  + " failures=" + $encoded_ci_failures
-                  + " external=" + .external_digest
-                  + " -->"
-                )
-              }
-          ) catch null) // null
-        ) as $v5_baseline
-        | if $v5_baseline != null
-          then $v5_baseline
-          else
-        (
-          (try (
-            .body
-            | capture(
-                "(?:^|\\n)<!-- oracle-pr-sentry:v4 identity=(?<identity>[A-Za-z0-9._-]+) kind=review fingerprint=(?<fingerprint>[0-9a-f]{64}) input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) failures=(?<encoded_ci_failures>[A-Za-z0-9+/]+={0,2}) external=(?<external_digest>[0-9a-f]{64}) -->\\n?$"
-              )
-            | .event_sequence |= tonumber
-            | .encoded_ci_failures as $encoded_ci_failures
-            | ($encoded_ci_failures | @base64d | fromjson) as $ci_failures
-            | select(
-                ($ci_failures | type) == "array"
-                and all(
-                  $ci_failures[];
-                  type == "object"
-                  and keys == ["name", "workflow"]
-                  and (.name | type == "string")
-                  and (.workflow | type == "string")
-                )
-              )
-            | ($ci_failures | map({workflow, name}) | unique_by([.workflow, .name])) as $normalized_ci_failures
-            | select($ci_failures == $normalized_ci_failures)
-            | del(.encoded_ci_failures)
-            | . + {
-                version: 4,
-                kind: "review",
-                draft: false,
-                ci_failures: $normalized_ci_failures,
-                ci_digest: "",
-                marker: (
-                  "<!-- oracle-pr-sentry:v4 identity=" + .identity
-                  + " kind=review fingerprint=" + .fingerprint
-                  + " input=" + .input_fingerprint
-                  + " head=" + .head_sha
-                  + " event=" + (.event_sequence | tostring)
-                  + " failures=" + $encoded_ci_failures
-                  + " external=" + .external_digest
-                  + " -->"
-                )
-              }
-          ) catch null) // null
-        ) as $v4
-        | if $v4 != null
-          then $v4
-          else
-        (
-          (try (
-            .body
-            | capture(
-                "(?:^|\\n)<!-- oracle-pr-sentry:v3 identity=(?<identity>[A-Za-z0-9._-]+) kind=baseline input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) draft=(?<draft>true|false) ci=(?<ci_digest>[0-9a-f]{64}) -->\\n?$"
-              )
-            | .event_sequence |= tonumber
-            | .draft |= (. == "true")
-            | . + {
-                version: 3,
-                kind: "baseline",
-                fingerprint: "",
-                marker: (
-                  "<!-- oracle-pr-sentry:v3 identity=" + .identity
-                  + " kind=baseline input=" + .input_fingerprint
-                  + " head=" + .head_sha
-                  + " event=" + (.event_sequence | tostring)
-                  + " draft=" + (.draft | tostring)
-                  + " ci=" + .ci_digest
-                  + " -->"
-                )
-              }
-          ) catch null) // null
-        ) as $v3
-        | if $v3 != null
-          then $v3
+        ) as $review
+        | if $review != null
+          then $review
           else
             (
               (try (
                 .body
                 | capture(
-                    "(?:^|\\n)<!-- oracle-pr-sentry:v2 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) input=(?<input_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) -->\\n?$"
+                    "(?:^|\\n)<!-- oracle-pr-sentry:v5 identity=(?<identity>[A-Za-z0-9._-]+) kind=baseline input=(?<input_fingerprint>[0-9a-f]{64}) context=(?<context_fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) event=(?<event_sequence>[1-9][0-9]*) draft=(?<draft>true|false) failures=(?<encoded_ci_failures>[A-Za-z0-9+/]+={0,2}) external=(?<external_digest>[0-9a-f]{64}) -->\\n?$"
                   )
                 | .event_sequence |= tonumber
+                | .draft |= (. == "true")
+                | .encoded_ci_failures as $encoded_ci_failures
+                | ($encoded_ci_failures | @base64d | fromjson) as $ci_failures
+                | select(
+                    ($ci_failures | type) == "array"
+                    and all(
+                      $ci_failures[];
+                      type == "object"
+                      and keys == ["name", "workflow"]
+                      and (.name | type == "string")
+                      and (.workflow | type == "string")
+                    )
+                  )
+                | ($ci_failures | map({workflow, name}) | unique_by([.workflow, .name])) as $normalized_ci_failures
+                | select($ci_failures == $normalized_ci_failures)
+                | del(.encoded_ci_failures)
                 | . + {
-                    version: 2,
-                    kind: "review",
-                    draft: false,
-                    ci_digest: "",
+                    kind: "baseline",
+                    fingerprint: "",
+                    ci_failures: $normalized_ci_failures,
                     marker: (
-                      "<!-- oracle-pr-sentry:v2 identity=" + .identity
-                      + " fingerprint=" + .fingerprint
-                      + " input=" + .input_fingerprint
+                      "<!-- oracle-pr-sentry:v5 identity=" + .identity
+                      + " kind=baseline input=" + .input_fingerprint
+                      + " context=" + .context_fingerprint
                       + " head=" + .head_sha
                       + " event=" + (.event_sequence | tostring)
+                      + " draft=" + (.draft | tostring)
+                      + " failures=" + $encoded_ci_failures
+                      + " external=" + .external_digest
                       + " -->"
                     )
                   }
               ) catch null) // null
-            ) as $v2
-            | if $v2 != null
-              then $v2
-              else
-                (
-                  (try (
-                    .body
-                    | capture(
-                        "(?:^|\\n)<!-- oracle-pr-sentry:v1 identity=(?<identity>[A-Za-z0-9._-]+) fingerprint=(?<fingerprint>[0-9a-f]{64}) head=(?<head_sha>[0-9A-Fa-f]{7,64}) -->\\n?$"
-                      )
-                    | . + {
-                        version: 1,
-                        kind: "review",
-                        input_fingerprint: .fingerprint,
-                        event_sequence: 0,
-                        draft: false,
-                        ci_digest: "",
-                        marker: (
-                          "<!-- oracle-pr-sentry:v1 identity=" + .identity
-                          + " fingerprint=" + .fingerprint
-                          + " head=" + .head_sha
-                          + " -->"
-                        )
-                      }
-                  ) catch null) // null
-                )
-              end
-          end
-        end
-        end
-        end;
+            )
+          end;
       def trusted_marker:
         . as $activity
         | if $activity.author != $sentry_login
@@ -1511,7 +1364,6 @@ snapshot_facts() {
         }
     ]
   ' "$snapshot_file") || return 1
-  SNAPSHOT_CI_FAILURE_COUNT=$(jq 'length' <<<"$SNAPSHOT_CI_JSON") || return 1
   SNAPSHOT_CI_IDENTITIES_JSON=$(jq -cS '
     def producer_key:
       (.producer | del(.check_suite_id))
@@ -1578,33 +1430,18 @@ snapshot_facts() {
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .kind // ""
   ' "$snapshot_file") || return 1
-  SNAPSHOT_LATEST_EVENT_VERSION=$(jq -r '
-    ((.publications | max_by([.event_sequence, .created_at])) // {})
-    | .version // 0
-  ' "$snapshot_file") || return 1
   SNAPSHOT_LATEST_EVENT_DRAFT=$(jq -r '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .draft // false
   ' "$snapshot_file") || return 1
-  SNAPSHOT_LATEST_EVENT_CI_DIGEST=$(jq -r '
-    ((.publications | max_by([.event_sequence, .created_at])) // {})
-    | .ci_digest // ""
-  ' "$snapshot_file") || return 1
   SNAPSHOT_LATEST_EVENT_CI_IDENTITIES_JSON=$(jq -cS '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .ci_failures // []
-    | map(
-        .workflow |= (
-          . as $workflow
-          | try (fromjson | del(.check_suite_id) | tojson) catch $workflow
-        )
-      )
   ' "$snapshot_file") || return 1
   SNAPSHOT_LATEST_EVENT_CONTEXT_FINGERPRINT=$(jq -r '
     ((.publications | max_by([.event_sequence, .created_at])) // {})
     | .context_fingerprint // ""
   ' "$snapshot_file") || return 1
-  SNAPSHOT_MARKER="<!-- $PROGRAM_NAME:v1 identity=$ORACLE_PR_SENTRY_IDENTITY fingerprint=$SNAPSHOT_FINGERPRINT head=$SNAPSHOT_HEAD -->"
 }
 
 snapshot_has_publication() {
@@ -1885,7 +1722,7 @@ process_candidate() {
   local candidate=$1
   local repository number work_directory now old_entry
   local comparison_fingerprint comparison_context comparison_head comparison_external
-  local observed_ci observed_ci_json observed_draft
+  local observed_ci_json observed_draft
   local new_ci_failure_count latest_ci_failure_count reason publish_status
   local baseline_marker=""
 
@@ -1921,7 +1758,7 @@ process_candidate() {
 
   old_entry=$(jq -c --arg key "$SNAPSHOT_KEY" '.prs[$key] // {}' <<<"$STATE_JSON") || return 1
   comparison_fingerprint=$(jq -r \
-    '.comparison.fingerprint // .reviewed.input_fingerprint // .reviewed.fingerprint // ""' \
+    '.comparison.fingerprint // .reviewed.input_fingerprint // ""' \
     <<<"$old_entry") || return 1
   comparison_context=$(jq -r \
     '.comparison.context_fingerprint // .reviewed.context_fingerprint // ""' \
@@ -1932,39 +1769,27 @@ process_candidate() {
   comparison_external=$(jq -r \
     '.comparison.external_digest // .reviewed.external_digest // ""' \
     <<<"$old_entry") || return 1
-  observed_ci=$(jq -r '.observed.ci_digest // .reviewed.ci_digest // ""' <<<"$old_entry") || return 1
   observed_ci_json=$(jq -cS '.observed.ci_failures // []' <<<"$old_entry") || return 1
   observed_draft=$(jq -r '.observed.draft // false' <<<"$old_entry") || return 1
   now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
-  if jq -e '.observed | has("ci_failures")' <<<"$old_entry" >/dev/null; then
-    new_ci_failure_count=$(jq -cn \
-      --argjson current "$SNAPSHOT_CI_JSON" \
-      --argjson observed "$observed_ci_json" '
-        def identities:
-          map({
-            workflow: (
-              if has("producer")
-              then (
-                (.producer | del(.check_suite_id))
-                | to_entries
-                | sort_by(.key)
-                | from_entries
-                | tojson
-              )
-              else .workflow
-              end
-            ),
-            name
-          })
-          | unique_by([.workflow, .name]);
-        (($current | identities) - ($observed | identities)) | length
-      ') || return 1
-  elif [[ "$observed_ci" == "$SNAPSHOT_CI_DIGEST" ]]; then
-    new_ci_failure_count=0
-  else
-    new_ci_failure_count=$SNAPSHOT_CI_FAILURE_COUNT
-  fi
+  new_ci_failure_count=$(jq -cn \
+    --argjson current "$SNAPSHOT_CI_JSON" \
+    --argjson observed "$observed_ci_json" '
+      def identities:
+        map({
+          workflow: (
+            (.producer | del(.check_suite_id))
+            | to_entries
+            | sort_by(.key)
+            | from_entries
+            | tojson
+          ),
+          name
+        })
+        | unique_by([.workflow, .name]);
+      (($current | identities) - ($observed | identities)) | length
+    ') || return 1
 
   latest_ci_failure_count=$(jq -cn \
     --argjson current "$SNAPSHOT_CI_IDENTITIES_JSON" \
@@ -2025,7 +1850,7 @@ process_candidate() {
     "$SNAPSHOT_LATEST_EVENT_DRAFT" == "true") ]]; then
     reason="draft-to-ready"
   elif [[ -z "$comparison_fingerprint" &&
-    "$SNAPSHOT_LATEST_EVENT_VERSION" -ge 5 &&
+    -n "$SNAPSHOT_LATEST_EVENT_KIND" &&
     "$SNAPSHOT_LATEST_PUBLICATION_HEAD" == "$SNAPSHOT_HEAD" &&
     "$SNAPSHOT_LATEST_PUBLICATION_INPUT" != "$SNAPSHOT_INPUT_FINGERPRINT" &&
     "$SNAPSHOT_LATEST_EVENT_CONTEXT_FINGERPRINT" == "$SNAPSHOT_CONTEXT_FINGERPRINT" ]]; then
@@ -2034,13 +1859,6 @@ process_candidate() {
     else
       reason=""
     fi
-  elif [[ -z "$comparison_fingerprint" &&
-    "$SNAPSHOT_LATEST_EVENT_KIND" == "baseline" &&
-    "$SNAPSHOT_LATEST_EVENT_VERSION" -lt 5 &&
-    "$SNAPSHOT_LATEST_EVENT_DRAFT" == "false" &&
-    "$SNAPSHOT_LATEST_EVENT_CI_DIGEST" != "$SNAPSHOT_CI_DIGEST" ]] &&
-    ((SNAPSHOT_CI_FAILURE_COUNT > 0)); then
-    reason="ci-failure"
   elif [[ -z "$comparison_fingerprint" ]]; then
     reason="new-pr"
   elif [[ "$comparison_head" != "$SNAPSHOT_HEAD" ]]; then
