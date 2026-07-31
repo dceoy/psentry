@@ -18,7 +18,48 @@ setup_sentry_test() {
   export TEST_ROOT TEST_HOME GH_SHIM_STATE_DIR SYSTEM_FLOCK SYSTEM_MV
   export HOME="$TEST_HOME"
   export PATH="$TEST_ROOT/tests/shims:$PATH"
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  READY_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  DRAFT_FIXTURE="$BATS_TEST_TMPDIR/pr-draft.json"
+  CI_PENDING_FIXTURE="$BATS_TEST_TMPDIR/pr-ci-pending.json"
+  CI_FAILURE_FIXTURE="$BATS_TEST_TMPDIR/pr-ci-failure.json"
+  EXTERNAL_ACTIVITY_FIXTURE="$BATS_TEST_TMPDIR/pr-external-activity.json"
+  jq '.isDraft = true | .body = "Work in progress."' \
+    "$READY_FIXTURE" > "$DRAFT_FIXTURE"
+  jq '
+    .statusCheckRollup = [{
+      name: "test",
+      workflowName: "CI",
+      status: "IN_PROGRESS",
+      conclusion: null,
+      startedAt: "2026-07-29T10:00:00Z",
+      completedAt: null,
+      detailsUrl: "https://github.com/octo/example/actions/runs/1"
+    }]
+  ' "$READY_FIXTURE" > "$CI_PENDING_FIXTURE"
+  jq '
+    .statusCheckRollup = [{
+      name: "test",
+      workflowName: "CI",
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+      startedAt: "2026-07-29T10:00:00Z",
+      completedAt: "2026-07-29T10:05:00Z",
+      detailsUrl: "https://github.com/octo/example/actions/runs/1"
+    }]
+  ' "$READY_FIXTURE" > "$CI_FAILURE_FIXTURE"
+  jq '
+    .comments = [{
+      id: "IC_kwDOexample",
+      author: {login: "reviewer"},
+      createdAt: "2026-07-29T11:00:00Z",
+      updatedAt: "2026-07-29T11:00:00Z",
+      body: "Could you double-check the failure path?"
+    }]
+  ' "$READY_FIXTURE" > "$EXTERNAL_ACTIVITY_FIXTURE"
+
+  export READY_FIXTURE DRAFT_FIXTURE
+  export CI_PENDING_FIXTURE CI_FAILURE_FIXTURE EXTERNAL_ACTIVITY_FIXTURE
+  export GH_FIXTURE="$READY_FIXTURE"
   export GH_DIFF_FIXTURE="$TEST_ROOT/tests/fixtures/pr.diff"
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
@@ -29,19 +70,18 @@ setup_sentry_test() {
   export ORACLE_PR_SENTRY_RUNTIME_DIR="$TEST_RUNTIME_DIR"
   export ORACLE_PR_SENTRY_CACHE_DIR="$TEST_CACHE_DIR"
   export ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME=5
-  export ORACLE_PR_SENTRY_RETENTION_DAYS=30
   export SENTRY_UNDER_TEST="$TEST_ROOT/bin/oracle-pr-sentry"
 
   unset \
     FAIL_STATE_MV \
     FLOCK_BUSY \
-    GH_DRAFT_FIXTURE \
     GH_FAIL_PR \
     GH_RACE_DIFF \
     GH_RACE_REQUIREMENTS \
     GH_FIXTURE_1 \
     GH_FIXTURE_2 \
     GH_INCLUDE_POSTED_MARKER \
+    GH_INLINE_COMMENTS_JSON \
     GH_REVIEW_THREAD_RESOLVED \
     GH_READY_SEARCH_FIXTURE \
     GH_RACE_ACTIVITY \
@@ -49,7 +89,9 @@ setup_sentry_test() {
     GH_REVIEW_FAIL \
     ORACLE_EMPTY_OUTPUT \
     ORACLE_EXIT_STATUS \
-    ORACLE_PR_SENTRY_ORACLE_ARGS_FILE \
+    ORACLE_PR_SENTRY_REATTACH_DELAY \
+    ORACLE_PR_SENTRY_REATTACH_INTERVAL \
+    ORACLE_PR_SENTRY_REATTACH_TIMEOUT \
     ORACLE_REVIEW_TEXT \
     ORACLE_SLEEP \
     ORACLE_SLEEP_PR_NUMBER
@@ -103,5 +145,5 @@ make_ci_failure_fixture() {
         detailsUrl: ("https://github.com/octo/example/actions/runs/" + .)
       }
     ]
-  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" > "$output"
+  ' "$READY_FIXTURE" > "$output"
 }
