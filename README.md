@@ -76,8 +76,18 @@ make oracle-login
 
 `make oracle-login` opens Chromium on the noVNC desktop. Complete the ChatGPT
 sign-in there. The image seeds `~/.config/psentry/env` from
-`config/env.example`. Change that file before rebuilding when different
-GitHub filters or Oracle settings are needed.
+`config/env.example` only the first time `HOME_VOLUME` is created; startup
+preserves an existing file on every later rebuild (`cp -an`), so changing
+`config/env.example` and rebuilding has no effect once the volume exists.
+Edit the live configuration directly in the persistent volume instead:
+
+```console
+container exec --interactive --tty psentry \
+  /usr/local/bin/psentry-entrypoint bash -c 'vim "$HOME/.config/psentry/env"'
+```
+
+Each pass re-reads this file, so the change applies on the next scheduled
+pass (or immediately with `make run`).
 
 The container starts one pass immediately, waits 15 minutes after it completes,
 and repeats. A failed pass is logged and does not stop polling. Change the

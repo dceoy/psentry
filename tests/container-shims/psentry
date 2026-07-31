@@ -17,7 +17,7 @@ fi
 if [[ "${ENTRYPOINT_BLOCK_PSENTRY:-0}" == 1 ]]; then
   trap 'printf "psentry-signal:INT\n" >> "${ENTRYPOINT_LOG}"; exit 130' INT
   trap 'printf "psentry-signal:TERM\n" >> "${ENTRYPOINT_LOG}"; exit 143' TERM
-  while true; do
-    "${SYSTEM_SLEEP:?}" 1
-  done
+  # Block on a real foreground child, like bin/psentry's Oracle subprocess,
+  # so a fix must signal the process group rather than just this PID.
+  "${SYSTEM_SLEEP:?}" 100
 fi

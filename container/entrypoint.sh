@@ -73,6 +73,11 @@ vncserver "${DISPLAY}" \
   -depth "${VNC_DEPTH}" \
   -localhost yes
 
+# Job control puts each backgrounded command in its own process group so a
+# workload's foreground descendants (e.g. bin/psentry's Oracle subprocess)
+# can be signaled directly instead of relying on bash to forward a trap.
+set -m
+
 websockify \
   --web=/usr/share/novnc \
   "0.0.0.0:${NOVNC_PORT}" \
@@ -84,7 +89,7 @@ shutdown_signal=''
 
 cleanup() {
   if [[ -n "${active_pid}" ]]; then
-    kill -TERM "${active_pid}" 2> /dev/null || true
+    kill -TERM -- "-${active_pid}" 2> /dev/null || true
     wait "${active_pid}" 2> /dev/null || true
   fi
   kill -TERM "${WEBSOCKIFY_PID}" 2> /dev/null || true
@@ -95,7 +100,7 @@ cleanup() {
 forward_signal() {
   shutdown_signal=$1
   if [[ -n "${active_pid}" ]]; then
-    kill -s "${shutdown_signal}" "${active_pid}" 2> /dev/null || true
+    kill -s "${shutdown_signal}" -- "-${active_pid}" 2> /dev/null || true
   fi
 }
 
@@ -121,16 +126,25 @@ run_active() {
   return "${status}"
 }
 
+require_websockify() {
+  if ! kill -0 "${WEBSOCKIFY_PID}" 2> /dev/null; then
+    printf 'ERROR: noVNC proxy exited unexpectedly.\n' >&2
+    exit 1
+  fi
+}
+
 trap cleanup EXIT
 trap 'forward_signal INT' INT
 trap 'forward_signal TERM' TERM
 
 while true; do
+  require_websockify
   printf 'Starting psentry pass.\n' >&2
   if ! run_active psentry; then
     printf 'WARNING: psentry pass failed; retrying after %s.\n' \
       "${PSENTRY_POLL_INTERVAL}" >&2
   fi
+  require_websockify
   printf 'Waiting %s before the next psentry pass.\n' \
     "${PSENTRY_POLL_INTERVAL}" >&2
   if ! run_active sleep -- "${PSENTRY_POLL_INTERVAL}"; then

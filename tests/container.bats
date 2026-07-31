@@ -122,6 +122,22 @@ stop_entrypoint() {
   wait_for_log '^sleep-signal:TERM$'
 }
 
+@test "the entrypoint stops when the noVNC proxy exits" {
+  export ENTRYPOINT_WEBSOCKIFY_EXIT=1
+  start_entrypoint
+  local status
+  if wait "$ENTRYPOINT_PID"; then
+    status=0
+  else
+    status=$?
+  fi
+  ENTRYPOINT_PID=
+
+  [ "$status" -eq 1 ]
+  grep -q '^websockify-exit:1$' "$ENTRYPOINT_LOG"
+  grep -q 'noVNC proxy exited unexpectedly' "$ENTRYPOINT_TMP/stderr"
+}
+
 @test "an invalid polling interval fails before services start" {
   export PSENTRY_POLL_INTERVAL=not-a-duration
 
