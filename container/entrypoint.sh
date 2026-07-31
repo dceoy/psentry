@@ -46,6 +46,12 @@ forward_signal() {
   shutdown_signal=$1
   if [[ -n "${active_pid}" ]]; then
     kill -s "${shutdown_signal}" -- "-${active_pid}" 2> /dev/null || true
+  elif [[ -n "${launching}" ]]; then
+    # A workload has been backgrounded but run_active has not yet recorded
+    # its PID in active_pid; queue the signal so run_active can forward it
+    # the instant registration completes, instead of finish_shutdown
+    # concluding nothing is running and exiting out from under it.
+    pending_signal="${shutdown_signal}"
   else
     # Nothing is running to signal, e.g. between one workload finishing and
     # the next starting; exit now instead of leaving the signal unhandled
@@ -96,8 +102,16 @@ reap_active() {
 run_active() {
   local completed_pid='' status
 
+  launching=1
   "${@}" &
   active_pid=$!
+  launching=''
+  if [[ -n "${pending_signal}" ]]; then
+    shutdown_signal="${pending_signal}"
+    pending_signal=''
+    forward_signal "${shutdown_signal}"
+  fi
+
   if wait -n -p completed_pid "${active_pid}" "${WEBSOCKIFY_PID}"; then
     status=0
   else
@@ -200,6 +214,8 @@ EOF
 
   active_pid=''
   shutdown_signal=''
+  launching=''
+  pending_signal=''
 
   trap cleanup EXIT
   trap 'forward_signal INT' INT

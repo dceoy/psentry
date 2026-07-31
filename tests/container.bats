@@ -143,7 +143,48 @@ wait_entrypoint() {
     WEBSOCKIFY_PID=$$
     active_pid=""
     shutdown_signal=""
+    launching=""
+    pending_signal=""
     forward_signal TERM
+  '
+
+  [ "$status" -eq 143 ]
+}
+
+@test "a signal during the launch window is queued instead of exiting immediately" {
+  # Closes the race between "${@}" & backgrounding a workload and the
+  # following active_pid=$! recording it: forward_signal must not conclude
+  # nothing is running and exit while a workload is mid-launch.
+  run bash -c '
+    source "'"$TEST_ROOT"'/container/entrypoint.sh"
+    WEBSOCKIFY_PID=$$
+    active_pid=""
+    shutdown_signal=""
+    launching=1
+    pending_signal=""
+    forward_signal TERM
+    printf "pending_signal=%s\n" "$pending_signal"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == "pending_signal=TERM" ]]
+}
+
+@test "a signal queued during the launch window is forwarded to the workload" {
+  # Pre-seeds pending_signal as if forward_signal had already deferred it
+  # during the launch window, then confirms run_active's post-registration
+  # check actually forwards it and kills the freshly launched workload,
+  # rather than just recording that a signal arrived.
+  run bash -c '
+    source "'"$TEST_ROOT"'/container/entrypoint.sh"
+    set -m
+    "$SYSTEM_SLEEP" 30 &
+    WEBSOCKIFY_PID=$!
+    active_pid=""
+    shutdown_signal=""
+    launching=""
+    pending_signal="TERM"
+    run_active "$SYSTEM_SLEEP" 30
   '
 
   [ "$status" -eq 143 ]
