@@ -104,6 +104,45 @@ EOF
   [ "$(oracle_count)" -eq 1 ]
 }
 
+@test "issue comments beyond the first page schedule external activity" {
+  first_pages="$BATS_TEST_TMPDIR/issue-comment-pages-initial.json"
+  updated_pages="$BATS_TEST_TMPDIR/issue-comment-pages-updated.json"
+  jq -n '
+    [[
+      range(0; 100) as $index
+      | {
+          id: ("IC_existing_" + ($index | tostring)),
+          author: {login: "reviewer"},
+          createdAt: "2026-07-29T09:00:00Z",
+          updatedAt: "2026-07-29T09:00:00Z",
+          body: ("Existing comment " + ($index | tostring))
+        }
+    ]]
+  ' > "$first_pages"
+  jq '
+    . + [[{
+      id: "IC_second_page",
+      author: {login: "reviewer"},
+      createdAt: "2026-07-29T10:00:00Z",
+      updatedAt: "2026-07-29T10:00:00Z",
+      body: "Comment beyond the first page"
+    }]]
+  ' "$first_pages" > "$updated_pages"
+  export GH_ISSUE_COMMENT_PAGES_JSON
+  GH_ISSUE_COMMENT_PAGES_JSON=$(< "$first_pages")
+
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  GH_ISSUE_COMMENT_PAGES_JSON=$(< "$updated_pages")
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  [[ "$output" == *"external-activity"* ]]
+}
+
 @test "pending reviews are excluded from snapshot activity" {
   invoke_sentry
   [ "$status" -eq 0 ]

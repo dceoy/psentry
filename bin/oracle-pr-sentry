@@ -552,6 +552,7 @@ collect_snapshot() {
   local number=$2
   local work_directory=$3
   local raw_pr="$work_directory/pr.json"
+  local issue_comment_pages="$work_directory/issue-comments.json"
   local review_pages="$work_directory/reviews.json"
   local review_comment_pages="$work_directory/review-comments.json"
   local review_thread_pages="$work_directory/review-threads.json"
@@ -562,12 +563,13 @@ collect_snapshot() {
   local repository_owner=${repository%%/*}
   local repository_name=${repository#*/}
   local check_contexts_query
+  local issue_comments_query
   local reviews_query
   local review_threads_query
   local diff_digest head_sha
 
   if ! gh pr view "$number" --repo "$repository" --json \
-    number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,comments,files \
+    number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,files \
     > "$raw_pr"; then
     log ERROR "failed to collect PR metadata for $repository#$number"
     return 1
@@ -664,6 +666,66 @@ collect_snapshot() {
     )
   ' "$review_pages" > /dev/null; then
     log ERROR "GitHub returned invalid reviews for $repository#$number"
+    return 1
+  fi
+
+  # shellcheck disable=SC2016  # GraphQL variables must remain literal here.
+  issue_comments_query='
+    query(
+      $owner: String!,
+      $name: String!,
+      $number: Int!,
+      $endCursor: String
+    ) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          comments(first: 100, after: $endCursor) {
+            nodes {
+              id
+              author {
+                login
+              }
+              createdAt
+              updatedAt
+              body
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+  '
+  if ! gh api graphql --paginate --slurp \
+    -f query="$issue_comments_query" \
+    -F owner="$repository_owner" \
+    -F name="$repository_name" \
+    -F number="$number" > "$issue_comment_pages"; then
+    log ERROR "failed to collect issue comments for $repository#$number"
+    return 1
+  fi
+  if ! jq -e '
+    type == "array"
+    and length > 0
+    and all(
+      .[];
+      (.data.repository.pullRequest.comments.nodes | type) == "array"
+      and all(
+        .data.repository.pullRequest.comments.nodes[];
+        (.id | type) == "string"
+        and (
+          .author == null
+          or (.author.login | type) == "string"
+        )
+        and (.createdAt | type) == "string"
+        and (.updatedAt | type) == "string"
+        and (.body | type) == "string"
+      )
+    )
+  ' "$issue_comment_pages" > /dev/null; then
+    log ERROR "GitHub returned invalid issue comments for $repository#$number"
     return 1
   fi
 
@@ -870,6 +932,7 @@ collect_snapshot() {
     --arg sentry_identity "$ORACLE_PR_SENTRY_IDENTITY" \
     --arg diff_digest "$diff_digest" \
     --slurpfile check_pages "$check_pages" \
+    --slurpfile issue_comment_pages "$issue_comment_pages" \
     --slurpfile review_pages "$review_pages" \
     --slurpfile review_comment_pages "$review_comment_pages" \
     --slurpfile review_thread_pages "$review_thread_pages" '
@@ -1017,6 +1080,12 @@ collect_snapshot() {
         | flatten
       ) as $check_contexts
       | (
+          $issue_comment_pages
+          | flatten
+          | map(.data.repository.pullRequest.comments.nodes)
+          | flatten
+        ) as $issue_comments
+      | (
           $review_pages
           | flatten
           | map(.data.repository.pullRequest.reviews.nodes)
@@ -1083,7 +1152,7 @@ collect_snapshot() {
             }
           ]
           + [
-            (.comments // [])[] | {
+            $issue_comments[] | {
               kind: "comment",
               id: (.id | text),
               author: (.author.login | text),

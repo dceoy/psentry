@@ -187,6 +187,52 @@ case "${1:-} ${2:-}" in
           }
         }]
       '
+    elif [[ "$*" == *"comments(first: 100"* ]]; then
+      number=1
+      for argument in "$@"; do
+        if [[ "$argument" == number=* ]]; then
+          number=${argument#number=}
+        fi
+      done
+      fixture_variable="GH_FIXTURE_$number"
+      fixture=${!fixture_variable:-$GH_FIXTURE}
+      issue_comment_count=$(increment_counter \
+        "$GH_SHIM_STATE_DIR/issue-comment-count-$number")
+      if [[ -n "${GH_ISSUE_COMMENT_PAGES_JSON:-}" ]]; then
+        issue_comment_pages=$GH_ISSUE_COMMENT_PAGES_JSON
+      else
+        issue_comment_pages=$(jq -c '[.comments // []]' "$fixture")
+      fi
+      if [[ "${GH_RACE_ACTIVITY:-0}" == 1 &&
+        "$issue_comment_count" -gt 1 ]]; then
+        issue_comment_pages=$(jq -c '
+          .[-1] += [{
+            id: "comment-race",
+            author: {login: "reviewer"},
+            createdAt: "2026-07-29T13:00:00Z",
+            updatedAt: "2026-07-29T13:00:00Z",
+            body: "New review input arrived while Oracle was running."
+          }]
+        ' <<< "$issue_comment_pages")
+      fi
+      jq -cn --argjson pages "$issue_comment_pages" '
+        $pages
+        | map({
+            data: {
+              repository: {
+                pullRequest: {
+                  comments: {
+                    nodes: .,
+                    pageInfo: {
+                      hasNextPage: false,
+                      endCursor: null
+                    }
+                  }
+                }
+              }
+            }
+          })
+      '
     else
       if [[ -z "${GH_REVIEW_THREAD_RESOLVED:-}" ]]; then
         review_threads='[]'
@@ -284,14 +330,6 @@ case "${1:-} ${2:-}" in
           .title = "Updated requirements"
           | .body = "Requirements changed while Oracle was running."
         '
-      elif [[ "${GH_RACE_ACTIVITY:-0}" == 1 && "$view_count" -gt 1 ]]; then
-        jq '.comments += [{
-          id: "comment-race",
-          author: {login: "reviewer"},
-          createdAt: "2026-07-29T13:00:00Z",
-          updatedAt: "2026-07-29T13:00:00Z",
-          body: "New review input arrived while Oracle was running."
-        }]'
       else
         jq .
       fi
