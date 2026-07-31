@@ -33,18 +33,19 @@ does not stop the remaining candidates. More eligible PRs make a pass longer
 rather than imposing a per-pass work budget. Concurrent manual passes exit
 through the global `flock`, and fixed-delay polling never overlaps passes.
 
-Repeated container restarts are a different, unresolved risk: restarting
-recomputes the same newest-first order from current GitHub data, so if the
-container is restarted before the first candidate's Oracle review completes
-or reaches its bounded timeout, every restart retries that same candidate
-from scratch, and later eligible candidates may never be attempted. This is
-an accepted tradeoff of removing local cursor state (#24): an interrupted
-review publishes no GitHub marker, so nothing in the search results or marker
-history can distinguish a candidate that keeps failing to finish from one
-that has not started yet, and no ordering rule derived purely from current
-GitHub data can rotate past it. If sustained restart loops become a real
-operational concern, reintroduce bounded local rotation state scoped to that
-case rather than reworking the stateless ordering.
+Repeated container restarts are a different, unresolved risk that keeps #24
+open rather than satisfying it: restarting recomputes the same newest-first
+order from current GitHub data, so if the container is restarted before the
+first candidate's Oracle review completes or reaches its bounded timeout,
+every restart retries that same candidate from scratch, and later eligible
+candidates may never be attempted. An interrupted review publishes no GitHub
+marker, so nothing in the search results or marker history can distinguish a
+candidate that keeps failing to finish from one that has not started yet,
+and no ordering rule derived purely from current GitHub data can rotate past
+it without further work. #24 should stay open until this is either fixed
+(for example a stateless, fine-grained, wall-clock-derived rotation of the
+starting candidate, or bounded local rotation state scoped to this case) or
+explicitly accepted as a known limitation by a maintainer.
 
 The window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (default and
 maximum `1000`, GitHub's own search API ceiling per query). If the number of

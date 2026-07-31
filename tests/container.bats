@@ -173,6 +173,30 @@ wait_entrypoint() {
   [ "$status" -eq 1 ]
 }
 
+@test "a second SIGTERM while reaping does not leave the workload running" {
+  start_entrypoint \
+    ENTRYPOINT_BLOCK_PSENTRY=1 \
+    ENTRYPOINT_TERM_DELAY=10 \
+    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=1
+  wait_for_event '^psentry-start:1:'
+  local workload_pid
+  read -r workload_pid < "$ENTRYPOINT_TMP/psentry.pid"
+
+  # Send a second TERM while entrypoint is still reaping the first one, i.e.
+  # before the psentry shim (which is sleeping out ENTRYPOINT_TERM_DELAY)
+  # actually exits, so it interrupts the blocking `wait` in reap_active.
+  kill -s TERM "$ENTRYPOINT_PID"
+  wait_for_log '^psentry-signal:TERM$'
+  kill -s TERM "$ENTRYPOINT_PID"
+  wait_entrypoint
+
+  [ "$ENTRYPOINT_STATUS" -eq 143 ]
+  run grep -q '^psentry-delayed-exit$' "$ENTRYPOINT_LOG"
+  [ "$status" -eq 1 ]
+  run kill -0 "$workload_pid"
+  [ "$status" -ne 0 ]
+}
+
 @test "the entrypoint stops when the noVNC proxy exits" {
   export ENTRYPOINT_WEBSOCKIFY_EXIT=1
   start_entrypoint

@@ -77,7 +77,13 @@ reap_active() {
   ) &
   killer_pid=$!
 
-  wait "${active_pid}" 2> /dev/null || true
+  # A second INT/TERM while this is blocked interrupts `wait` (via the
+  # forward_signal trap) before the child actually exits, so a single wait
+  # call is not sufficient evidence of exit; loop until the PID is actually
+  # gone, bounded by the killer's SIGKILL deadline above.
+  while kill -0 "${active_pid}" 2> /dev/null; do
+    wait "${active_pid}" 2> /dev/null || true
+  done
   kill -- "-${killer_pid}" 2> /dev/null || true
   wait "${killer_pid}" 2> /dev/null || true
   active_pid=''

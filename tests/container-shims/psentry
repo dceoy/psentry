@@ -15,6 +15,7 @@ if [[ "${ENTRYPOINT_FAIL_FIRST:-0}" == 1 && "${count}" -eq 1 ]]; then
 fi
 
 if [[ "${ENTRYPOINT_BLOCK_PSENTRY:-0}" == 1 ]]; then
+  printf '%s\n' "$$" > "${ENTRYPOINT_TMP:?}/psentry.pid"
   trap 'printf "psentry-signal:INT\n" >> "${ENTRYPOINT_LOG}"; exit 130' INT
   trap '
     printf "psentry-signal:TERM\n" >> "${ENTRYPOINT_LOG}"
