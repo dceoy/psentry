@@ -1,6 +1,6 @@
-# oracle-pr-sentry
+# psentry
 
-`oracle-pr-sentry` is a small Linux service that polls GitHub for pull requests
+`psentry` is a small Linux service that polls GitHub for pull requests
 and asks [Oracle](https://github.com/steipete/oracle) to review meaningful
 updates through a signed-in ChatGPT Web browser session. It posts only
 comment-only GitHub reviews. Trusted, authenticated review markers are the
@@ -78,7 +78,7 @@ make oracle-login
 
 `make oracle-login` opens Chromium on the noVNC desktop. Complete the ChatGPT
 sign-in there. The image seeds
-`~/.config/oracle-pr-sentry/env` from `config/env.example`; edit it from
+`~/.config/psentry/env` from `config/env.example`; edit it from
 `make shell` before the first sentry pass when different GitHub filters or
 Oracle settings are needed.
 
@@ -134,24 +134,24 @@ ordinary Oracle/ChatGPT profile. Create the directory and log in through it
 from the user's graphical session:
 
 ```console
-install -d -m 700 ~/.local/share/oracle-pr-sentry/oracle-home
+install -d -m 700 ~/.local/share/psentry/oracle-home
 env -u ORACLE_BROWSER_PROFILE_DIR \
-  ORACLE_HOME_DIR=~/.local/share/oracle-pr-sentry/oracle-home \
+  ORACLE_HOME_DIR=~/.local/share/psentry/oracle-home \
   oracle --engine browser \
   --browser-manual-login \
   --browser-manual-login-profile-dir \
-    ~/.local/share/oracle-pr-sentry/oracle-home/browser-profile \
+    ~/.local/share/psentry/oracle-home/browser-profile \
   --browser-keep-browser \
   --browser-input-timeout 120000 \
-  --prompt "Initialize the oracle-pr-sentry browser profile"
+  --prompt "Initialize the psentry browser profile"
 ```
 
 Complete the ChatGPT sign-in in the opened window. This pins the dedicated
 automation profile under
-`~/.local/share/oracle-pr-sentry/oracle-home/browser-profile`. The timer must
+`~/.local/share/psentry/oracle-home/browser-profile`. The timer must
 run as this same Linux user. If `XDG_DATA_HOME` is set, use
-`$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` instead, or set
-`ORACLE_PR_SENTRY_ORACLE_HOME_DIR` to a custom location before the first run.
+`$XDG_DATA_HOME/psentry/oracle-home` instead, or set
+`PSENTRY_ORACLE_HOME_DIR` to a custom location before the first run.
 
 Browser automation depends on the ChatGPT Web UI and login state. UI changes,
 anti-bot challenges, subscription/model availability, and session expiry can
@@ -162,26 +162,26 @@ interrupt it even when the sentry itself is healthy.
 From a checkout:
 
 ```console
-bin/oracle-pr-sentry install
-install -d -m 700 ~/.config/oracle-pr-sentry
-install -m 600 config/env.example ~/.config/oracle-pr-sentry/env
-${EDITOR:-vi} ~/.config/oracle-pr-sentry/env
+bin/psentry install
+install -d -m 700 ~/.config/psentry
+install -m 600 config/env.example ~/.config/psentry/env
+${EDITOR:-vi} ~/.config/psentry/env
 ```
 
 The installer copies only these project-managed files:
 
-- `~/.local/bin/oracle-pr-sentry`
-- `~/.local/share/oracle-pr-sentry/review-prompt.md`
-- `~/.local/share/oracle-pr-sentry/decision-reducer.jq`
-- `~/.config/systemd/user/oracle-pr-sentry.service`
-- `~/.config/systemd/user/oracle-pr-sentry.timer`
+- `~/.local/bin/psentry`
+- `~/.local/share/psentry/review-prompt.md`
+- `~/.local/share/psentry/decision-reducer.jq`
+- `~/.config/systemd/user/psentry.service`
+- `~/.config/systemd/user/psentry.timer`
 
 It does not create credentials, configuration, state, or browser data.
 
 Validate discovery before enabling automation:
 
 ```console
-oracle-pr-sentry --dry-run
+psentry --dry-run
 ```
 
 Dry-run mode performs live GitHub discovery and fingerprint decisions. It still
@@ -192,55 +192,55 @@ files use an isolated workspace that is removed when the pass exits.
 Enable the 15-minute timer:
 
 ```console
-oracle-pr-sentry enable
-systemctl --user list-timers oracle-pr-sentry.timer
+psentry enable
+systemctl --user list-timers psentry.timer
 ```
 
 ## Configuration
 
 The default configuration file is
-`~/.config/oracle-pr-sentry/env`. The executable validates its owner and mode
+`~/.config/psentry/env`. The executable validates its owner and mode
 before sourcing it as trusted Bash; the systemd unit does not load it into the
 process environment. Keep it owned by the user and non-writable by group or
 other users:
 
 ```console
-chmod 600 ~/.config/oracle-pr-sentry/env
+chmod 600 ~/.config/psentry/env
 ```
 
 The sourced file takes precedence over exported environment values; the
 `--dry-run` command-line option takes precedence over both.
 
-| Variable                                 | Default                                       | Purpose                                                                                  |
-| ---------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `ORACLE_PR_SENTRY_GITHUB_OWNER`          | authenticated `gh` login                      | Repository owner or organization filter                                                  |
-| `ORACLE_PR_SENTRY_GITHUB_AUTHOR`         | authenticated `gh` login                      | Pull request author filter                                                               |
-| `ORACLE_PR_SENTRY_PR_SEARCH_LIMIT`       | `50`                                          | Maximum most-recently-updated ready and draft observations per search                    |
-| `ORACLE_PR_SENTRY_ORACLE_BIN`            | `oracle`                                      | Oracle executable name or absolute path                                                  |
-| `ORACLE_PR_SENTRY_ORACLE_MODEL`          | `gpt-5.5-pro`                                 | ChatGPT model requested from Oracle                                                      |
-| `ORACLE_PR_SENTRY_ORACLE_THINKING_TIME`  | `extended`                                    | Oracle browser thinking level                                                            |
-| `ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN`   | `1`                                           | Reuse Oracle's persistent manual-login profile                                           |
-| `ORACLE_PR_SENTRY_ORACLE_HOME_DIR`       | `$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` | Private `ORACLE_HOME_DIR` isolating Oracle's config and browser profile from `~/.oracle` |
-| `ORACLE_PR_SENTRY_REATTACH_DELAY`        | unset                                         | Optional Oracle browser auto-reattach delay                                              |
-| `ORACLE_PR_SENTRY_REATTACH_INTERVAL`     | unset                                         | Optional Oracle browser auto-reattach polling interval                                   |
-| `ORACLE_PR_SENTRY_REATTACH_TIMEOUT`      | unset                                         | Optional Oracle browser auto-reattach timeout                                            |
-| `ORACLE_PR_SENTRY_PROMPT_PATH`           | installed prompt                              | Independently editable review instructions                                               |
-| `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME`    | `1800`                                        | Oracle timeout in whole seconds                                                          |
-| `ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES` | `60000`                                       | Maximum generated review plus marker                                                     |
-| `ORACLE_PR_SENTRY_STATE_FILE`            | `$XDG_STATE_HOME/oracle-pr-sentry/state.json` | Persistent candidate-rotation cursor only                                                |
-| `ORACLE_PR_SENTRY_CACHE_DIR`             | `$XDG_CACHE_HOME/oracle-pr-sentry`            | Private cache directory                                                                  |
-| `ORACLE_PR_SENTRY_RUNTIME_DIR`           | `$XDG_RUNTIME_DIR/oracle-pr-sentry-$UID`      | Lock and secure temporary workspace                                                      |
-| `ORACLE_PR_SENTRY_LOCK_FILE`             | runtime directory `sentry.lock`               | Global non-blocking lock                                                                 |
-| `ORACLE_PR_SENTRY_IDENTITY`              | `oracle-pr-sentry`                            | Identity encoded in hidden review markers                                                |
-| `ORACLE_PR_SENTRY_DRY_RUN`               | `0`                                           | Environment equivalent of `--dry-run`                                                    |
+| Variable                        | Default                              | Purpose                                                                                  |
+| ------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `PSENTRY_GITHUB_OWNER`          | authenticated `gh` login             | Repository owner or organization filter                                                  |
+| `PSENTRY_GITHUB_AUTHOR`         | authenticated `gh` login             | Pull request author filter                                                               |
+| `PSENTRY_PR_SEARCH_LIMIT`       | `50`                                 | Maximum most-recently-updated ready and draft observations per search                    |
+| `PSENTRY_ORACLE_BIN`            | `oracle`                             | Oracle executable name or absolute path                                                  |
+| `PSENTRY_ORACLE_MODEL`          | `gpt-5.5-pro`                        | ChatGPT model requested from Oracle                                                      |
+| `PSENTRY_ORACLE_THINKING_TIME`  | `extended`                           | Oracle browser thinking level                                                            |
+| `PSENTRY_ORACLE_MANUAL_LOGIN`   | `1`                                  | Reuse Oracle's persistent manual-login profile                                           |
+| `PSENTRY_ORACLE_HOME_DIR`       | `$XDG_DATA_HOME/psentry/oracle-home` | Private `ORACLE_HOME_DIR` isolating Oracle's config and browser profile from `~/.oracle` |
+| `PSENTRY_REATTACH_DELAY`        | unset                                | Optional Oracle browser auto-reattach delay                                              |
+| `PSENTRY_REATTACH_INTERVAL`     | unset                                | Optional Oracle browser auto-reattach polling interval                                   |
+| `PSENTRY_REATTACH_TIMEOUT`      | unset                                | Optional Oracle browser auto-reattach timeout                                            |
+| `PSENTRY_PROMPT_PATH`           | installed prompt                     | Independently editable review instructions                                               |
+| `PSENTRY_MAX_REVIEW_RUNTIME`    | `1800`                               | Oracle timeout in whole seconds                                                          |
+| `PSENTRY_MAX_REVIEW_BODY_BYTES` | `60000`                              | Maximum generated review plus marker                                                     |
+| `PSENTRY_STATE_FILE`            | `$XDG_STATE_HOME/psentry/state.json` | Persistent candidate-rotation cursor only                                                |
+| `PSENTRY_CACHE_DIR`             | `$XDG_CACHE_HOME/psentry`            | Private cache directory                                                                  |
+| `PSENTRY_RUNTIME_DIR`           | `$XDG_RUNTIME_DIR/psentry-$UID`      | Lock and secure temporary workspace                                                      |
+| `PSENTRY_LOCK_FILE`             | runtime directory `sentry.lock`      | Global non-blocking lock                                                                 |
+| `PSENTRY_IDENTITY`              | `psentry`                            | Identity encoded in hidden review markers                                                |
+| `PSENTRY_DRY_RUN`               | `0`                                  | Environment equivalent of `--dry-run`                                                    |
 
 The optional reattach settings accept only positive integer durations with an
 `ms`, `s`, `m`, or `h` suffix:
 
 ```bash
-ORACLE_PR_SENTRY_REATTACH_DELAY=30s
-ORACLE_PR_SENTRY_REATTACH_INTERVAL=2m
-ORACLE_PR_SENTRY_REATTACH_TIMEOUT=2m
+PSENTRY_REATTACH_DELAY=30s
+PSENTRY_REATTACH_INTERVAL=2m
+PSENTRY_REATTACH_TIMEOUT=2m
 ```
 
 No generic Oracle argument passthrough is supported. The browser engine,
@@ -248,7 +248,7 @@ configured model, prompt, attachments, output path, fresh local tab,
 single-tab concurrency, attached bounded foreground execution, route, and
 timeout policy remain fixed by the executable.
 
-If `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` is raised above 30 minutes, also raise
+If `PSENTRY_MAX_REVIEW_RUNTIME` is raised above 30 minutes, also raise
 the service's `RuntimeMaxSec` and `TimeoutStartSec`, then reinstall the unit.
 systemd ignores `RuntimeMaxSec` while a `Type=oneshot` service is activating,
 so `TimeoutStartSec` supplies the effective 35-minute process bound; both are
@@ -283,15 +283,15 @@ fingerprint, race handling, and state model.
 Useful lifecycle commands:
 
 ```console
-systemctl --user start oracle-pr-sentry.service
-systemctl --user status oracle-pr-sentry.service
-journalctl --user -u oracle-pr-sentry.service -n 100
-journalctl --user -u oracle-pr-sentry.service -f
-systemctl --user list-timers oracle-pr-sentry.timer
+systemctl --user start psentry.service
+systemctl --user status psentry.service
+journalctl --user -u psentry.service -n 100
+journalctl --user -u psentry.service -f
+systemctl --user list-timers psentry.timer
 
-oracle-pr-sentry disable
-oracle-pr-sentry enable
-oracle-pr-sentry uninstall
+psentry disable
+psentry enable
+psentry uninstall
 ```
 
 `uninstall` removes only the five installed project files listed above. It

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly PROGRAM_NAME="oracle-pr-sentry"
+readonly PROGRAM_NAME="psentry"
 readonly PROGRAM_VERSION="0.1.0"
 readonly STATE_SCHEMA_VERSION=1
 readonly MARKER_VERSION=6
@@ -35,16 +35,16 @@ die() {
 usage() {
   cat << 'EOF'
 Usage:
-  oracle-pr-sentry [--dry-run]
-  oracle-pr-sentry install
-  oracle-pr-sentry enable
-  oracle-pr-sentry disable
-  oracle-pr-sentry uninstall
-  oracle-pr-sentry --help
-  oracle-pr-sentry --version
+  psentry [--dry-run]
+  psentry install
+  psentry enable
+  psentry disable
+  psentry uninstall
+  psentry --help
+  psentry --version
 
 Run one discovery and review pass. Configuration is read from
-${XDG_CONFIG_HOME:-$HOME/.config}/oracle-pr-sentry/env by default.
+${XDG_CONFIG_HOME:-$HOME/.config}/psentry/env by default.
 
 Options:
   --dry-run   Discover PRs and report decisions without Oracle, GitHub writes,
@@ -247,61 +247,61 @@ source_configuration() {
   local checkout_prompt
   local checkout_reducer
 
-  [[ -n "${ORACLE_PR_SENTRY_CONFIG_FILE:-}" ]] && config_was_explicit=1
+  [[ -n "${PSENTRY_CONFIG_FILE:-}" ]] && config_was_explicit=1
 
   XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
   XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
   XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
   XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 
-  ORACLE_PR_SENTRY_CONFIG_FILE="${ORACLE_PR_SENTRY_CONFIG_FILE:-${XDG_CONFIG_HOME}/$PROGRAM_NAME/env}"
-  ORACLE_PR_SENTRY_STATE_FILE="${ORACLE_PR_SENTRY_STATE_FILE:-${XDG_STATE_HOME}/$PROGRAM_NAME/state.json}"
-  ORACLE_PR_SENTRY_CACHE_DIR="${ORACLE_PR_SENTRY_CACHE_DIR:-${XDG_CACHE_HOME}/$PROGRAM_NAME}"
-  ORACLE_PR_SENTRY_ORACLE_HOME_DIR="${ORACLE_PR_SENTRY_ORACLE_HOME_DIR:-${XDG_DATA_HOME}/$PROGRAM_NAME/oracle-home}"
-  ORACLE_PR_SENTRY_RUNTIME_DIR="${ORACLE_PR_SENTRY_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}/$PROGRAM_NAME-$(id -u)}"
-  ORACLE_PR_SENTRY_LOCK_FILE="${ORACLE_PR_SENTRY_LOCK_FILE:-}"
+  PSENTRY_CONFIG_FILE="${PSENTRY_CONFIG_FILE:-${XDG_CONFIG_HOME}/$PROGRAM_NAME/env}"
+  PSENTRY_STATE_FILE="${PSENTRY_STATE_FILE:-${XDG_STATE_HOME}/$PROGRAM_NAME/state.json}"
+  PSENTRY_CACHE_DIR="${PSENTRY_CACHE_DIR:-${XDG_CACHE_HOME}/$PROGRAM_NAME}"
+  PSENTRY_ORACLE_HOME_DIR="${PSENTRY_ORACLE_HOME_DIR:-${XDG_DATA_HOME}/$PROGRAM_NAME/oracle-home}"
+  PSENTRY_RUNTIME_DIR="${PSENTRY_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}/$PROGRAM_NAME-$(id -u)}"
+  PSENTRY_LOCK_FILE="${PSENTRY_LOCK_FILE:-}"
 
   installed_prompt="${XDG_DATA_HOME}/$PROGRAM_NAME/review-prompt.md"
   checkout_prompt="${SOURCE_ROOT}/share/$PROGRAM_NAME/review-prompt.md"
   checkout_reducer="${SOURCE_ROOT}/share/$PROGRAM_NAME/decision-reducer.jq"
   if [[ -r "$installed_prompt" ]]; then
-    ORACLE_PR_SENTRY_PROMPT_PATH="${ORACLE_PR_SENTRY_PROMPT_PATH:-$installed_prompt}"
+    PSENTRY_PROMPT_PATH="${PSENTRY_PROMPT_PATH:-$installed_prompt}"
   else
-    ORACLE_PR_SENTRY_PROMPT_PATH="${ORACLE_PR_SENTRY_PROMPT_PATH:-$checkout_prompt}"
+    PSENTRY_PROMPT_PATH="${PSENTRY_PROMPT_PATH:-$checkout_prompt}"
   fi
   DECISION_REDUCER_PATH=$checkout_reducer
 
-  ORACLE_PR_SENTRY_GITHUB_OWNER="${ORACLE_PR_SENTRY_GITHUB_OWNER:-}"
-  ORACLE_PR_SENTRY_GITHUB_AUTHOR="${ORACLE_PR_SENTRY_GITHUB_AUTHOR:-}"
-  ORACLE_PR_SENTRY_PR_SEARCH_LIMIT="${ORACLE_PR_SENTRY_PR_SEARCH_LIMIT:-50}"
-  ORACLE_PR_SENTRY_ORACLE_BIN="${ORACLE_PR_SENTRY_ORACLE_BIN:-oracle}"
-  ORACLE_PR_SENTRY_ORACLE_MODEL="${ORACLE_PR_SENTRY_ORACLE_MODEL:-gpt-5.5-pro}"
-  ORACLE_PR_SENTRY_ORACLE_THINKING_TIME="${ORACLE_PR_SENTRY_ORACLE_THINKING_TIME:-extended}"
-  ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN="${ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN:-1}"
-  ORACLE_PR_SENTRY_REATTACH_DELAY="${ORACLE_PR_SENTRY_REATTACH_DELAY:-}"
-  ORACLE_PR_SENTRY_REATTACH_INTERVAL="${ORACLE_PR_SENTRY_REATTACH_INTERVAL:-}"
-  ORACLE_PR_SENTRY_REATTACH_TIMEOUT="${ORACLE_PR_SENTRY_REATTACH_TIMEOUT:-}"
-  ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME="${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME:-1800}"
-  ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES="${ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES:-60000}"
-  ORACLE_PR_SENTRY_IDENTITY="${ORACLE_PR_SENTRY_IDENTITY:-oracle-pr-sentry}"
-  ORACLE_PR_SENTRY_DRY_RUN="${ORACLE_PR_SENTRY_DRY_RUN:-0}"
+  PSENTRY_GITHUB_OWNER="${PSENTRY_GITHUB_OWNER:-}"
+  PSENTRY_GITHUB_AUTHOR="${PSENTRY_GITHUB_AUTHOR:-}"
+  PSENTRY_PR_SEARCH_LIMIT="${PSENTRY_PR_SEARCH_LIMIT:-50}"
+  PSENTRY_ORACLE_BIN="${PSENTRY_ORACLE_BIN:-oracle}"
+  PSENTRY_ORACLE_MODEL="${PSENTRY_ORACLE_MODEL:-gpt-5.5-pro}"
+  PSENTRY_ORACLE_THINKING_TIME="${PSENTRY_ORACLE_THINKING_TIME:-extended}"
+  PSENTRY_ORACLE_MANUAL_LOGIN="${PSENTRY_ORACLE_MANUAL_LOGIN:-1}"
+  PSENTRY_REATTACH_DELAY="${PSENTRY_REATTACH_DELAY:-}"
+  PSENTRY_REATTACH_INTERVAL="${PSENTRY_REATTACH_INTERVAL:-}"
+  PSENTRY_REATTACH_TIMEOUT="${PSENTRY_REATTACH_TIMEOUT:-}"
+  PSENTRY_MAX_REVIEW_RUNTIME="${PSENTRY_MAX_REVIEW_RUNTIME:-1800}"
+  PSENTRY_MAX_REVIEW_BODY_BYTES="${PSENTRY_MAX_REVIEW_BODY_BYTES:-60000}"
+  PSENTRY_IDENTITY="${PSENTRY_IDENTITY:-psentry}"
+  PSENTRY_DRY_RUN="${PSENTRY_DRY_RUN:-0}"
 
-  if [[ -e "$ORACLE_PR_SENTRY_CONFIG_FILE" ]]; then
-    validate_trusted_file "$ORACLE_PR_SENTRY_CONFIG_FILE" user
+  if [[ -e "$PSENTRY_CONFIG_FILE" ]]; then
+    validate_trusted_file "$PSENTRY_CONFIG_FILE" user
     # The configuration file is deliberately a trusted, user-owned Bash source.
     # shellcheck disable=SC1090
-    source "$ORACLE_PR_SENTRY_CONFIG_FILE"
+    source "$PSENTRY_CONFIG_FILE"
     set -Eeuo pipefail
     IFS=$'\n\t'
     umask 077
   elif ((config_was_explicit)); then
-    die "configured file does not exist: $ORACLE_PR_SENTRY_CONFIG_FILE"
+    die "configured file does not exist: $PSENTRY_CONFIG_FILE"
   fi
 
   if [[ -n "$DRY_RUN_CLI" ]]; then
-    ORACLE_PR_SENTRY_DRY_RUN=1
+    PSENTRY_DRY_RUN=1
   fi
-  ORACLE_PR_SENTRY_LOCK_FILE="${ORACLE_PR_SENTRY_LOCK_FILE:-${ORACLE_PR_SENTRY_RUNTIME_DIR}/sentry.lock}"
+  PSENTRY_LOCK_FILE="${PSENTRY_LOCK_FILE:-${PSENTRY_RUNTIME_DIR}/sentry.lock}"
 }
 
 validate_positive_integer() {
@@ -320,32 +320,32 @@ validate_optional_duration() {
 }
 
 validate_configuration() {
-  validate_positive_integer ORACLE_PR_SENTRY_PR_SEARCH_LIMIT "$ORACLE_PR_SENTRY_PR_SEARCH_LIMIT"
-  validate_positive_integer ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME "$ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME"
-  validate_positive_integer ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES "$ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES"
-  validate_optional_duration ORACLE_PR_SENTRY_REATTACH_DELAY \
-    "$ORACLE_PR_SENTRY_REATTACH_DELAY"
-  validate_optional_duration ORACLE_PR_SENTRY_REATTACH_INTERVAL \
-    "$ORACLE_PR_SENTRY_REATTACH_INTERVAL"
-  validate_optional_duration ORACLE_PR_SENTRY_REATTACH_TIMEOUT \
-    "$ORACLE_PR_SENTRY_REATTACH_TIMEOUT"
+  validate_positive_integer PSENTRY_PR_SEARCH_LIMIT "$PSENTRY_PR_SEARCH_LIMIT"
+  validate_positive_integer PSENTRY_MAX_REVIEW_RUNTIME "$PSENTRY_MAX_REVIEW_RUNTIME"
+  validate_positive_integer PSENTRY_MAX_REVIEW_BODY_BYTES "$PSENTRY_MAX_REVIEW_BODY_BYTES"
+  validate_optional_duration PSENTRY_REATTACH_DELAY \
+    "$PSENTRY_REATTACH_DELAY"
+  validate_optional_duration PSENTRY_REATTACH_INTERVAL \
+    "$PSENTRY_REATTACH_INTERVAL"
+  validate_optional_duration PSENTRY_REATTACH_TIMEOUT \
+    "$PSENTRY_REATTACH_TIMEOUT"
 
-  ((ORACLE_PR_SENTRY_PR_SEARCH_LIMIT <= 1000)) \
-    || die "ORACLE_PR_SENTRY_PR_SEARCH_LIMIT must not exceed 1000"
-  ((ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES <= 65000)) \
-    || die "ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES must not exceed 65000"
+  ((PSENTRY_PR_SEARCH_LIMIT <= 1000)) \
+    || die "PSENTRY_PR_SEARCH_LIMIT must not exceed 1000"
+  ((PSENTRY_MAX_REVIEW_BODY_BYTES <= 65000)) \
+    || die "PSENTRY_MAX_REVIEW_BODY_BYTES must not exceed 65000"
 
-  [[ "$ORACLE_PR_SENTRY_DRY_RUN" == 0 || "$ORACLE_PR_SENTRY_DRY_RUN" == 1 ]] \
-    || die "ORACLE_PR_SENTRY_DRY_RUN must be 0 or 1"
-  [[ "$ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN" == 0 ||
-    "$ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN" == 1 ]] \
-    || die "ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN must be 0 or 1"
-  [[ "$ORACLE_PR_SENTRY_IDENTITY" =~ ^[A-Za-z0-9._-]+$ ]] \
-    || die "ORACLE_PR_SENTRY_IDENTITY contains unsupported characters"
+  [[ "$PSENTRY_DRY_RUN" == 0 || "$PSENTRY_DRY_RUN" == 1 ]] \
+    || die "PSENTRY_DRY_RUN must be 0 or 1"
+  [[ "$PSENTRY_ORACLE_MANUAL_LOGIN" == 0 ||
+    "$PSENTRY_ORACLE_MANUAL_LOGIN" == 1 ]] \
+    || die "PSENTRY_ORACLE_MANUAL_LOGIN must be 0 or 1"
+  [[ "$PSENTRY_IDENTITY" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || die "PSENTRY_IDENTITY contains unsupported characters"
 
-  [[ -r "$ORACLE_PR_SENTRY_PROMPT_PATH" ]] \
-    || die "review prompt is not readable: $ORACLE_PR_SENTRY_PROMPT_PATH"
-  validate_trusted_file "$ORACLE_PR_SENTRY_PROMPT_PATH" user-or-root
+  [[ -r "$PSENTRY_PROMPT_PATH" ]] \
+    || die "review prompt is not readable: $PSENTRY_PROMPT_PATH"
+  validate_trusted_file "$PSENTRY_PROMPT_PATH" user-or-root
   [[ -r "$DECISION_REDUCER_PATH" ]] \
     || die "decision reducer is not readable: $DECISION_REDUCER_PATH"
   validate_trusted_file "$DECISION_REDUCER_PATH" user-or-root
@@ -354,7 +354,7 @@ validate_configuration() {
 validate_dependencies() {
   local dependency
   local dependencies=(
-    gh jq "$ORACLE_PR_SENTRY_ORACLE_BIN" flock timeout sha256sum awk
+    gh jq "$PSENTRY_ORACLE_BIN" flock timeout sha256sum awk
     date id install stat chmod mktemp mv rm rmdir dirname readlink
     grep wc
   )
@@ -367,7 +367,7 @@ validate_dependencies() {
 prepare_runtime() {
   local dry_run_root lock_directory state_directory
 
-  if ((ORACLE_PR_SENTRY_DRY_RUN)); then
+  if ((PSENTRY_DRY_RUN)); then
     dry_run_root=${TMPDIR:-/tmp}
     while [[ "$dry_run_root" != "/" && "$dry_run_root" == */ ]]; do
       dry_run_root=${dry_run_root%/}
@@ -384,22 +384,22 @@ prepare_runtime() {
     return 0
   fi
 
-  state_directory=$(dirname -- "$ORACLE_PR_SENTRY_STATE_FILE")
-  lock_directory=$(dirname -- "$ORACLE_PR_SENTRY_LOCK_FILE")
+  state_directory=$(dirname -- "$PSENTRY_STATE_FILE")
+  lock_directory=$(dirname -- "$PSENTRY_LOCK_FILE")
   ensure_private_directory "$state_directory"
-  ensure_private_directory "$ORACLE_PR_SENTRY_CACHE_DIR"
-  ensure_private_directory "$ORACLE_PR_SENTRY_ORACLE_HOME_DIR"
-  ensure_private_directory "$ORACLE_PR_SENTRY_RUNTIME_DIR"
+  ensure_private_directory "$PSENTRY_CACHE_DIR"
+  ensure_private_directory "$PSENTRY_ORACLE_HOME_DIR"
+  ensure_private_directory "$PSENTRY_RUNTIME_DIR"
   ensure_private_directory "$lock_directory"
 
-  exec {LOCK_FD}> "$ORACLE_PR_SENTRY_LOCK_FILE"
+  exec {LOCK_FD}> "$PSENTRY_LOCK_FILE"
   if ! flock -n "$LOCK_FD"; then
     log INFO "another sentry invocation holds the global lock; exiting"
     exit 0
   fi
 
-  RUN_TMP=$(mktemp -d -- "$ORACLE_PR_SENTRY_RUNTIME_DIR/run.XXXXXXXX")
-  [[ "$RUN_TMP" == "$ORACLE_PR_SENTRY_RUNTIME_DIR"/run.* ]] \
+  RUN_TMP=$(mktemp -d -- "$PSENTRY_RUNTIME_DIR/run.XXXXXXXX")
+  [[ "$RUN_TMP" == "$PSENTRY_RUNTIME_DIR"/run.* ]] \
     || die "temporary directory was created outside the runtime directory"
   RUN_TMP_OWNED=1
 }
@@ -411,17 +411,17 @@ cleanup() {
 }
 
 load_state() {
-  if [[ ! -e "$ORACLE_PR_SENTRY_STATE_FILE" ]]; then
+  if [[ ! -e "$PSENTRY_STATE_FILE" ]]; then
     STATE_JSON='{"version":'"$STATE_SCHEMA_VERSION"'}'
     return 0
   fi
 
-  [[ -f "$ORACLE_PR_SENTRY_STATE_FILE" && ! -L "$ORACLE_PR_SENTRY_STATE_FILE" ]] \
-    || die "state file must be a regular, non-symlink file: $ORACLE_PR_SENTRY_STATE_FILE"
-  [[ "$(stat -c '%u' -- "$ORACLE_PR_SENTRY_STATE_FILE")" == "$(id -u)" ]] \
+  [[ -f "$PSENTRY_STATE_FILE" && ! -L "$PSENTRY_STATE_FILE" ]] \
+    || die "state file must be a regular, non-symlink file: $PSENTRY_STATE_FILE"
+  [[ "$(stat -c '%u' -- "$PSENTRY_STATE_FILE")" == "$(id -u)" ]] \
     || die "state file must be owned by the current user"
-  if ((ORACLE_PR_SENTRY_DRY_RUN == 0)); then
-    chmod 600 -- "$ORACLE_PR_SENTRY_STATE_FILE"
+  if ((PSENTRY_DRY_RUN == 0)); then
+    chmod 600 -- "$PSENTRY_STATE_FILE"
   fi
 
   if ! jq -e '
@@ -436,19 +436,19 @@ load_state() {
           and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
       )
     )
-  ' "$ORACLE_PR_SENTRY_STATE_FILE" > /dev/null; then
-    die "malformed or unsupported state file: $ORACLE_PR_SENTRY_STATE_FILE"
+  ' "$PSENTRY_STATE_FILE" > /dev/null; then
+    die "malformed or unsupported state file: $PSENTRY_STATE_FILE"
   fi
-  if ! STATE_JSON=$(jq -cS . "$ORACLE_PR_SENTRY_STATE_FILE"); then
-    die "failed to load state file: $ORACLE_PR_SENTRY_STATE_FILE"
+  if ! STATE_JSON=$(jq -cS . "$PSENTRY_STATE_FILE"); then
+    die "failed to load state file: $PSENTRY_STATE_FILE"
   fi
 }
 
 persist_state() {
   local state_directory temporary_state
 
-  ((ORACLE_PR_SENTRY_DRY_RUN == 0)) || return 0
-  state_directory=$(dirname -- "$ORACLE_PR_SENTRY_STATE_FILE")
+  ((PSENTRY_DRY_RUN == 0)) || return 0
+  state_directory=$(dirname -- "$PSENTRY_STATE_FILE")
   temporary_state=$(mktemp -- "$state_directory/.state.XXXXXXXX")
 
   if ! printf '%s\n' "$STATE_JSON" | jq -S . > "$temporary_state"; then
@@ -457,7 +457,7 @@ persist_state() {
     return 1
   fi
   chmod 600 -- "$temporary_state"
-  if ! mv -f -- "$temporary_state" "$ORACLE_PR_SENTRY_STATE_FILE"; then
+  if ! mv -f -- "$temporary_state" "$PSENTRY_STATE_FILE"; then
     rm -f -- "$temporary_state"
     log ERROR "failed to atomically replace state file"
     return 1
@@ -491,11 +491,11 @@ discover_candidates() {
   local candidates_file="$RUN_TMP/candidates.json"
   local candidate_cursor
   local common_args=(
-    --owner "$ORACLE_PR_SENTRY_GITHUB_OWNER"
-    --author "$ORACLE_PR_SENTRY_GITHUB_AUTHOR"
+    --owner "$PSENTRY_GITHUB_OWNER"
+    --author "$PSENTRY_GITHUB_AUTHOR"
     --state open
     --archived=false
-    --limit "$ORACLE_PR_SENTRY_PR_SEARCH_LIMIT"
+    --limit "$PSENTRY_PR_SEARCH_LIMIT"
     --sort updated
     --order desc
     --json "number,repository,url,isDraft,updatedAt"
@@ -929,7 +929,7 @@ collect_snapshot() {
     --arg repository "$repository" \
     --arg sentry_login "$SENTRY_LOGIN" \
     --arg marker_prefix "$marker_prefix" \
-    --arg sentry_identity "$ORACLE_PR_SENTRY_IDENTITY" \
+    --arg sentry_identity "$PSENTRY_IDENTITY" \
     --arg diff_digest "$diff_digest" \
     --slurpfile check_pages "$check_pages" \
     --slurpfile issue_comment_pages "$issue_comment_pages" \
@@ -942,7 +942,7 @@ collect_snapshot() {
         (try (
           .body
           | capture(
-              "(?:^|\\n)<!-- oracle-pr-sentry:v6 payload=(?<encoded>[A-Za-z0-9+/]+={0,2}) -->\\n?$"
+              "(?:^|\\n)<!-- psentry:v6 payload=(?<encoded>[A-Za-z0-9+/]+={0,2}) -->\\n?$"
             )
           | .encoded as $encoded
           | ($encoded | @base64d) as $decoded
@@ -1054,7 +1054,7 @@ collect_snapshot() {
           | select(($canonical | tojson) == $decoded)
           | $canonical + {
               marker: (
-                "<!-- oracle-pr-sentry:v6 payload=" + $encoded + " -->"
+                "<!-- psentry:v6 payload=" + $encoded + " -->"
               )
             }
         ) catch null) // null;
@@ -1437,7 +1437,7 @@ build_marker() {
   local payload encoded
 
   payload=$(jq -cnS \
-    --arg identity "$ORACLE_PR_SENTRY_IDENTITY" \
+    --arg identity "$PSENTRY_IDENTITY" \
     --arg kind "$kind" \
     --arg reason "$reason" \
     --arg fingerprint "$fingerprint" \
@@ -1553,32 +1553,32 @@ run_oracle_review() {
   local prompt output_size expected_diff_digest actual_diff_digest
   local oracle_args=(
     --engine browser
-    --model "$ORACLE_PR_SENTRY_ORACLE_MODEL"
-    --browser-thinking-time "$ORACLE_PR_SENTRY_ORACLE_THINKING_TIME"
-    --browser-timeout "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s"
+    --model "$PSENTRY_ORACLE_MODEL"
+    --browser-thinking-time "$PSENTRY_ORACLE_THINKING_TIME"
+    --browser-timeout "${PSENTRY_MAX_REVIEW_RUNTIME}s"
     --browser-max-concurrent-tabs 1
-    --browser-manual-login-profile-dir "$ORACLE_PR_SENTRY_ORACLE_HOME_DIR/browser-profile"
+    --browser-manual-login-profile-dir "$PSENTRY_ORACLE_HOME_DIR/browser-profile"
     --no-background
     --wait
     --write-output "$output_file"
   )
 
-  if ((ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN)); then
+  if ((PSENTRY_ORACLE_MANUAL_LOGIN)); then
     oracle_args+=(--browser-manual-login)
   fi
-  if [[ -n "$ORACLE_PR_SENTRY_REATTACH_DELAY" ]]; then
+  if [[ -n "$PSENTRY_REATTACH_DELAY" ]]; then
     oracle_args+=(
-      --browser-auto-reattach-delay "$ORACLE_PR_SENTRY_REATTACH_DELAY"
+      --browser-auto-reattach-delay "$PSENTRY_REATTACH_DELAY"
     )
   fi
-  if [[ -n "$ORACLE_PR_SENTRY_REATTACH_INTERVAL" ]]; then
+  if [[ -n "$PSENTRY_REATTACH_INTERVAL" ]]; then
     oracle_args+=(
-      --browser-auto-reattach-interval "$ORACLE_PR_SENTRY_REATTACH_INTERVAL"
+      --browser-auto-reattach-interval "$PSENTRY_REATTACH_INTERVAL"
     )
   fi
-  if [[ -n "$ORACLE_PR_SENTRY_REATTACH_TIMEOUT" ]]; then
+  if [[ -n "$PSENTRY_REATTACH_TIMEOUT" ]]; then
     oracle_args+=(
-      --browser-auto-reattach-timeout "$ORACLE_PR_SENTRY_REATTACH_TIMEOUT"
+      --browser-auto-reattach-timeout "$PSENTRY_REATTACH_TIMEOUT"
     )
   fi
 
@@ -1605,15 +1605,15 @@ run_oracle_review() {
     return 1
   fi
 
-  prompt=$(< "$ORACLE_PR_SENTRY_PROMPT_PATH")
+  prompt=$(< "$PSENTRY_PROMPT_PATH")
   log INFO "invoking Oracle for $repository#$number at $SNAPSHOT_HEAD"
   if (
     cd -- "$work_directory" \
       && unset ORACLE_BROWSER_PROFILE_DIR \
-      && ORACLE_HOME_DIR="$ORACLE_PR_SENTRY_ORACLE_HOME_DIR" \
+      && ORACLE_HOME_DIR="$PSENTRY_ORACLE_HOME_DIR" \
         exec timeout --foreground --signal=TERM --kill-after=30s \
-        "${ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME}s" \
-        "$ORACLE_PR_SENTRY_ORACLE_BIN" \
+        "${PSENTRY_MAX_REVIEW_RUNTIME}s" \
+        "$PSENTRY_ORACLE_BIN" \
         "${oracle_args[@]}" \
         --prompt "$prompt" \
         --file "$metadata_file" \
@@ -1631,8 +1631,8 @@ run_oracle_review() {
     return 1
   fi
   output_size=$(wc -c < "$output_file") || return 1
-  if ((output_size > ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES)); then
-    log ERROR "Oracle output is $output_size bytes; review limit is $ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES"
+  if ((output_size > PSENTRY_MAX_REVIEW_BODY_BYTES)); then
+    log ERROR "Oracle output is $output_size bytes; review limit is $PSENTRY_MAX_REVIEW_BODY_BYTES"
     return 1
   fi
   if ! jq -Rs -e 'test("\\S")' < "$output_file" > /dev/null; then
@@ -1705,8 +1705,8 @@ publish_review() {
     return 1
   fi
   publication_size=$(wc -c < "$publication_file") || return 1
-  if ((publication_size > ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES)); then
-    log ERROR "review body is $publication_size bytes; limit is $ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES"
+  if ((publication_size > PSENTRY_MAX_REVIEW_BODY_BYTES)); then
+    log ERROR "review body is $publication_size bytes; limit is $PSENTRY_MAX_REVIEW_BODY_BYTES"
     return 1
   fi
 
@@ -1778,7 +1778,7 @@ process_candidate() {
       else
         log INFO "unchanged $SNAPSHOT_KEY: no meaningful update"
       fi
-      if ((ORACLE_PR_SENTRY_DRY_RUN)); then
+      if ((PSENTRY_DRY_RUN)); then
         log INFO "dry-run $SNAPSHOT_KEY: would publish baseline"
         return 0
       fi
@@ -1811,7 +1811,7 @@ process_candidate() {
     return
   fi
 
-  if ((ORACLE_PR_SENTRY_DRY_RUN)); then
+  if ((PSENTRY_DRY_RUN)); then
     log INFO "dry-run $SNAPSHOT_KEY: would review ($reason)"
     return 0
   fi
@@ -1851,8 +1851,8 @@ run_sentry() {
   fi
   [[ "$SENTRY_LOGIN" =~ ^[A-Za-z0-9_.-]+(\[bot\])?$ ]] \
     || die "GitHub returned an invalid authenticated login"
-  ORACLE_PR_SENTRY_GITHUB_OWNER="${ORACLE_PR_SENTRY_GITHUB_OWNER:-$SENTRY_LOGIN}"
-  ORACLE_PR_SENTRY_GITHUB_AUTHOR="${ORACLE_PR_SENTRY_GITHUB_AUTHOR:-$SENTRY_LOGIN}"
+  PSENTRY_GITHUB_OWNER="${PSENTRY_GITHUB_OWNER:-$SENTRY_LOGIN}"
+  PSENTRY_GITHUB_AUTHOR="${PSENTRY_GITHUB_AUTHOR:-$SENTRY_LOGIN}"
 
   load_state
   if ! candidates_file=$(discover_candidates); then
@@ -1862,7 +1862,7 @@ run_sentry() {
 
   for candidate in "${candidates[@]}"; do
     ((processed += 1))
-    if ((ORACLE_PR_SENTRY_DRY_RUN == 0)) \
+    if ((PSENTRY_DRY_RUN == 0)) \
       && ! checkpoint_candidate_cursor "$candidate"; then
       ((failures += 1))
       log ERROR "candidate rotation checkpoint failed; continuing without a durable cursor"
@@ -1873,7 +1873,7 @@ run_sentry() {
     fi
   done
 
-  log INFO "pass complete: candidates=$processed failures=$failures dry_run=$ORACLE_PR_SENTRY_DRY_RUN"
+  log INFO "pass complete: candidates=$processed failures=$failures dry_run=$PSENTRY_DRY_RUN"
   ((failures == 0))
 }
 
