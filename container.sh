@@ -8,8 +8,8 @@ if [[ "${#}" -gt 0 && "${1}" == '--debug' ]]; then
 fi
 
 readonly CONTAINERFILE="${CONTAINERFILE:-Containerfile}"
-readonly IMAGE="${IMAGE:-oracle-pr-sentry:local}"
-readonly NAME="${NAME:-oracle-pr-sentry}"
+readonly IMAGE="${IMAGE:-psentry:local}"
+readonly NAME="${NAME:-psentry}"
 readonly HOST_IP="${HOST_IP:-127.0.0.1}"
 readonly PORT="${PORT:-6080}"
 readonly CPUS="${CPUS:-4}"
@@ -23,11 +23,11 @@ else
   readonly VNC_PASSWORD VNC_PASSWORD_GENERATED=1
 fi
 readonly CONTAINER_HOME='/home/agent'
-readonly HOME_VOLUME="${HOME_VOLUME:-oracle-pr-sentry-home}"
+readonly HOME_VOLUME="${HOME_VOLUME:-psentry-home}"
 readonly CONTAINER_WORKSPACE='/workspace'
 readonly WORKSPACE_DIR="${WORKSPACE_DIR:-$(pwd)}"
 readonly MIN_MACOS_MAJOR="${MIN_MACOS_MAJOR:-26}"
-readonly SENTRY_ORACLE_HOME="${CONTAINER_HOME}/.local/share/oracle-pr-sentry/oracle-home"
+readonly SENTRY_ORACLE_HOME="${CONTAINER_HOME}/.local/share/psentry/oracle-home"
 
 container_running() {
   container list --quiet 2> /dev/null | grep -Fx "${NAME}" > /dev/null
@@ -244,7 +244,7 @@ shell() {
   start_container_system
   require_running
   exec container exec --interactive --tty \
-    "${NAME}" /usr/local/bin/oracle-pr-sentry-entrypoint bash --login
+    "${NAME}" /usr/local/bin/psentry-entrypoint bash --login
 }
 
 gh_login() {
@@ -252,7 +252,7 @@ gh_login() {
   start_container_system
   require_running
   exec container exec --interactive --tty \
-    "${NAME}" /usr/local/bin/oracle-pr-sentry-entrypoint gh auth login
+    "${NAME}" /usr/local/bin/psentry-entrypoint gh auth login
 }
 
 oracle_login() {
@@ -264,7 +264,7 @@ oracle_login() {
   novnc_url="$(container_novnc_url)"
   printf 'Complete the ChatGPT login in noVNC: %s\n' "${novnc_url}"
   exec container exec --interactive --tty \
-    "${NAME}" /usr/local/bin/oracle-pr-sentry-entrypoint \
+    "${NAME}" /usr/local/bin/psentry-entrypoint \
     env -u ORACLE_BROWSER_PROFILE_DIR \
     "ORACLE_HOME_DIR=${SENTRY_ORACLE_HOME}" \
     oracle \
@@ -273,7 +273,7 @@ oracle_login() {
     --browser-manual-login-profile-dir "${SENTRY_ORACLE_HOME}/browser-profile" \
     --browser-keep-browser \
     --browser-input-timeout 5m \
-    --prompt 'Initialize the oracle-pr-sentry browser profile'
+    --prompt 'Initialize the psentry browser profile'
 }
 
 run() {
@@ -281,7 +281,7 @@ run() {
   start_container_system
   require_running
   container exec \
-    "${NAME}" /usr/local/bin/oracle-pr-sentry-entrypoint oracle-pr-sentry
+    "${NAME}" /usr/local/bin/psentry-entrypoint psentry
 }
 
 dry_run() {
@@ -289,7 +289,7 @@ dry_run() {
   start_container_system
   require_running
   container exec \
-    "${NAME}" /usr/local/bin/oracle-pr-sentry-entrypoint oracle-pr-sentry --dry-run
+    "${NAME}" /usr/local/bin/psentry-entrypoint psentry --dry-run
 }
 
 clean() {
@@ -323,7 +323,7 @@ Targets:
   shell         Open an interactive shell as the unprivileged agent user
   gh-login      Authenticate GitHub CLI in the persistent home volume
   oracle-login  Authenticate ChatGPT Web through the noVNC desktop
-  run           Run one oracle-pr-sentry pass
+  run           Run one psentry pass
   dry-run       Discover and report decisions without writes
   pull          Pull IMAGE for linux/arm64
   build         Build IMAGE locally for linux/arm64
@@ -333,8 +333,8 @@ Targets:
 
 Common variables:
   CONTAINERFILE=Containerfile
-  IMAGE=oracle-pr-sentry:local
-  NAME=oracle-pr-sentry
+  IMAGE=psentry:local
+  NAME=psentry
   HOST_IP=127.0.0.1
   PORT=6080
   CPUS=4
@@ -342,7 +342,7 @@ Common variables:
   VNC_GEOMETRY=1440x900
   VNC_DEPTH=24
   VNC_PASSWORD=<generated for loopback use when empty>
-  HOME_VOLUME=oracle-pr-sentry-home
+  HOME_VOLUME=psentry-home
   WORKSPACE_DIR=<current directory>
 EOF
 }

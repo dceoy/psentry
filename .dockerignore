@@ -3,11 +3,11 @@
 !.dockerignore
 !Containerfile
 !bin/
-!bin/oracle-pr-sentry
+!bin/psentry
 !config/
 !config/env.example
 !container/
 !container/entrypoint.sh
 !share/
-!share/oracle-pr-sentry/
-!share/oracle-pr-sentry/review-prompt.md
+!share/psentry/
+!share/psentry/review-prompt.md

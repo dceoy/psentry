@@ -21,12 +21,12 @@ if (("$(id -u)" == 0)); then
     env \
     USER="${USER_NAME}" \
     LOGNAME="${USER_NAME}" \
-    ORACLE_PR_SENTRY_SEED_HOME=1 \
+    PSENTRY_SEED_HOME=1 \
     "${BASH_SOURCE[0]}" "${@}"
 fi
 
-if [[ "${ORACLE_PR_SENTRY_SEED_HOME:-0}" == 1 && -d /opt/home-skel ]]; then
-  unset ORACLE_PR_SENTRY_SEED_HOME
+if [[ "${PSENTRY_SEED_HOME:-0}" == 1 && -d /opt/home-skel ]]; then
+  unset PSENTRY_SEED_HOME
   cp -an /opt/home-skel/. "${HOME}/"
 fi
 

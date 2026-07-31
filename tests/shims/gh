@@ -375,7 +375,7 @@ case "${1:-} ${2:-}" in
       exit 1
     fi
     marker_payload=$(sed -n \
-      's/.*<!-- oracle-pr-sentry:v6 payload=\([A-Za-z0-9+/]*=*\) -->.*/\1/p' \
+      's/.*<!-- psentry:v6 payload=\([A-Za-z0-9+/]*=*\) -->.*/\1/p' \
       "$body_file")
     marker_kind=$(jq -rn --arg payload "$marker_payload" \
       '$payload | @base64d | fromjson | .kind')

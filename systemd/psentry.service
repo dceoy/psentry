@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/oracle-pr-sentry
+ExecStart=%h/.local/bin/psentry
 RuntimeMaxSec=35min
 TimeoutStartSec=35min
 NoNewPrivileges=true

@@ -184,7 +184,7 @@ history or transition semantics.
 Review and baseline events use the same versioned marker:
 
 ```text
-<!-- oracle-pr-sentry:v6 payload=BASE64_CANONICAL_JSON -->
+<!-- psentry:v6 payload=BASE64_CANONICAL_JSON -->
 ```
 
 The decoded payload contains the configured identity, event kind, event
