@@ -589,7 +589,11 @@ collect_snapshot() {
     ) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
-          reviews(first: 100, after: $endCursor) {
+          reviews(
+            first: 100,
+            after: $endCursor,
+            states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]
+          ) {
             nodes {
               id
               author {

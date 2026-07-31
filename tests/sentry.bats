@@ -104,6 +104,31 @@ EOF
   [ "$(oracle_count)" -eq 1 ]
 }
 
+@test "pending reviews are excluded from snapshot activity" {
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  pending_review_fixture="$BATS_TEST_TMPDIR/pr-with-pending-review.json"
+  jq '
+    .reviews += [{
+      id: "PRR_pending",
+      author: {login: "sentry-bot"},
+      submittedAt: null,
+      state: "PENDING",
+      body: "Unsubmitted draft feedback",
+      commit: null
+    }]
+  ' "$GH_FIXTURE" > "$pending_review_fixture"
+  export GH_FIXTURE="$pending_review_fixture"
+
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+  [[ "$output" == *"no meaningful update"* ]]
+}
+
 @test "normalized PR metadata mutations trigger the tabled review reason" {
   while IFS=$'\t' read -r name patch expected_reason; do
     scenario_root="$BATS_TEST_TMPDIR/$name"

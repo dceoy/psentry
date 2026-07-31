@@ -150,7 +150,7 @@ case "${1:-} ${2:-}" in
             }
           }]
         '
-    elif [[ "$*" == *"reviews(first: 100"* ]]; then
+    elif [[ "$*" == *"states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]"* ]]; then
       number=1
       for argument in "$@"; do
         if [[ "$argument" == number=* ]]; then
@@ -160,6 +160,9 @@ case "${1:-} ${2:-}" in
       fixture_variable="GH_FIXTURE_$number"
       fixture=${!fixture_variable:-$GH_FIXTURE}
       reviews=$(append_publications "$fixture" "$number" | jq -c '.reviews // []')
+      if [[ "$*" == *"states:"* ]]; then
+        reviews=$(jq -c 'map(select(.state != "PENDING"))' <<< "$reviews")
+      fi
       jq -cn --argjson reviews "$reviews" '
         [{
           data: {
