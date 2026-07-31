@@ -7,14 +7,14 @@ Each timer activation runs exactly one process:
 1. validate trusted configuration and required commands;
 2. acquire the non-blocking global `flock`;
 3. identify the authenticated GitHub account;
-4. load and validate the local state document;
+4. load and validate the local candidate-rotation cursor;
 5. search open, non-archived pull requests with the configured owner/author
    filters;
 6. collect and normalize each pull request independently;
-7. compare its deterministic fingerprint with the last GitHub-accepted review;
+7. reduce the current facts and latest trusted GitHub marker to one action;
 8. invoke Oracle only for a meaningful update;
 9. re-read the PR state and head;
-10. publish a comment-only review and atomically record success.
+10. publish a comment-only review, making GitHub acceptance the commit point.
 
 Errors for one pull request are logged and do not prevent remaining candidates
 from being processed. The pass still exits non-zero so systemd records a
@@ -138,12 +138,13 @@ CI digest and ready state. Consequently a title/body edit, base retarget, or
 base-branch update that changes the effective PR diff schedules a new review
 even when the head SHA is unchanged.
 
-A differing fingerprint is reviewed only when it represents first observation,
+The side-effect-free `decision-reducer.jq` program receives only `current` and
+`previous` facts and returns `{action, reason}`. Its actions are `review`,
+`baseline`, and `none`. A review is selected for first ready observation,
 draft readiness, a new head, a changed base/diff context, a newly added
-relevant current-head CI failure, or changed external activity. Comparing the
-normalized current and previously observed failure sets prevents either a
-transition back to success or a shrinking failure set from scheduling a review
-by itself.
+relevant current-head CI failure, or changed external activity. CI recovery
+and shrinking failure sets select `baseline`, preserving the comparison on
+GitHub without invoking Oracle.
 
 Every scheduled review receives an event fingerprint that hashes its input
 fingerprint, trigger reason, and the next event sequence recovered from trusted
@@ -159,86 +160,48 @@ represented by the head SHA, base ref, and exact diff digest; labels,
 assignees, milestones, and generic GitHub `updatedAt` are intentionally absent
 from the trigger projection.
 
-## State schema
+## Local state schema
 
-One JSON document stores entries under canonical `owner/repository#number`
-keys:
+The local JSON document stores no per-PR observations or review records. It
+contains only the cursor needed to rotate candidates across interrupted or
+budget-limited passes:
 
 ```json
 {
   "version": 1,
-  "candidate_cursor": "owner/repository#123",
-  "prs": {
-    "owner/repository#123": {
-      "url": "https://github.com/owner/repository/pull/123",
-      "observed": {
-        "head_sha": "...",
-        "draft": false,
-        "ci_digest": "...",
-        "ci_failures": [],
-        "last_seen_at": "2026-07-29T12:00:00Z"
-      },
-      "reviewed": {
-        "fingerprint": "...",
-        "input_fingerprint": "...",
-        "context_fingerprint": "...",
-        "head_sha": "...",
-        "draft": false,
-        "ci_digest": "...",
-        "external_digest": "...",
-        "successful_at": "2026-07-29T12:00:00Z",
-        "marker": "<!-- oracle-pr-sentry:v4 ... -->",
-        "publication_status": "published"
-      }
-    }
-  }
+  "candidate_cursor": "owner/repository#123"
 }
 ```
 
-`observed` may advance for a draft or unchanged PR and records both the latest
-normalized CI failure set and its digest. A review is triggered only when the
-set gains a failure, while an intervening successful observation allows the
-same failure to trigger again later. Whenever the latest trusted GitHub event
-does not represent a draft or unchanged snapshot, the sentry submits a hidden
-baseline marker as a comment-only review so that local state loss before either
-observation cannot erase the intervening success or draft transition. Event
-identity comes from the durable sequence shared by baseline and generated
-review markers, so state loss or retention pruning cannot reuse an older
-transition fingerprint. Recovering or publishing a baseline also records an
-optional `comparison` checkpoint with the matching input, context, head, CI,
-and external-activity digests when no reviewed comparison state exists.
-Version 5 baseline markers also retain the normalized CI failure identities,
-so consecutive state losses cannot turn a shrinking failure set into a new
-failure event. This preserves trigger comparisons across recovery and between
-consecutive no-review transitions without invoking Oracle; the checkpoint is
-removed after the next successful generated review.
-`reviewed` advances only after GitHub accepts the comment-only review or when
-an already-published exact marker is recovered. Oracle and GitHub failures
-never advance it.
-
 Writes use `mktemp` in the state file's directory, complete JSON validation,
 mode `0600`, and `mv` on the same filesystem. This prevents partial documents.
-An absent file is a valid first run; malformed or unsupported state fails
-closed.
-
-Entries not seen by the configured searches are pruned after the retention
-window. This eventually removes closed PRs and PRs made ineligible by filter
-changes without requiring a separate database or full closed-PR scan.
+An absent file is a valid empty cursor; malformed or unsupported state fails
+closed. Deleting this file may change only candidate order, never review
+history or transition semantics.
 
 ## Publication and races
 
-Every generated Oracle review ends with:
+Review and baseline events use the same versioned marker:
 
 ```text
-<!-- oracle-pr-sentry:v5 identity=IDENTITY kind=review fingerprint=SHA256 input=INPUT_SHA256 context=CONTEXT_SHA256 head=HEAD_SHA event=SEQUENCE failures=BASE64_JSON external=EXTERNAL_SHA256 -->
+<!-- oracle-pr-sentry:v6 payload=BASE64_CANONICAL_JSON -->
 ```
 
-Before Oracle, the latest trusted marker can reconcile missing local state when
-its input fingerprint and head match the current snapshot. Version 5 review and
-baseline markers retain the context fingerprint and normalized CI failure
-identities, allowing a success or shrinking failure set to remain
-non-triggering after state loss without masking a changed base, diff, or
-discussion.
+The decoded payload contains the configured identity, event kind, event
+sequence, review reason and fingerprint, input and context fingerprints, head
+SHA, draft flag, normalized CI failure identities, and external-activity
+digest. JSON is serialized with `jq -cS` and encoded with standard Base64.
+Parsing extracts only the payload token, decodes it, validates the exact schema
+and canonical representation, and trusts it only when its author is the
+authenticated sentry account and its identity matches configuration.
+Malformed, duplicated-key, non-canonical, spoofed-author, and foreign-identity
+markers remain external activity.
+
+Version 6 intentionally does not parse v5 markers or legacy per-PR local
+state. Upgrades remove the old local state and perform a documented one-time
+rebaseline of open PRs, after which the executable has one steady-state
+parser.
+
 Immediately before publication, the sentry collects a fresh snapshot and
 requires:
 
@@ -251,8 +214,9 @@ requires:
 
 A stale Oracle result is discarded. Publication always uses
 `gh pr review --comment --body-file`; approval and request-changes modes are
-not exposed. GitHub acceptance is the commit point. If the following local
-state write fails, the exact marker restores idempotency on the next pass.
+not exposed. Exact-marker duplicate detection runs before Oracle and again
+before publication. GitHub acceptance is the commit point, and the accepted
+marker restores idempotency after process interruption or local data loss.
 
 ## Explicit non-goals
 
