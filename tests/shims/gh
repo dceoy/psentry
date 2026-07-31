@@ -190,11 +190,20 @@ case "${1:-} ${2:-}" in
         review_threads='[]'
       else
         review_threads=$(jq -cn \
-          --argjson resolved "$GH_REVIEW_THREAD_RESOLVED" '
+          --argjson resolved "$GH_REVIEW_THREAD_RESOLVED" \
+          --arg review_state \
+          "${GH_REVIEW_THREAD_REVIEW_STATE:-COMMENTED}" '
             [{
               id: "PRRT_kwDOexample",
               isResolved: $resolved,
-              isOutdated: false
+              isOutdated: false,
+              comments: {
+                nodes: [{
+                  pullRequestReview: {
+                    state: $review_state
+                  }
+                }]
+              }
             }]
           ')
       fi

@@ -806,6 +806,13 @@ collect_snapshot() {
               id
               isResolved
               isOutdated
+              comments(first: 1) {
+                nodes {
+                  pullRequestReview {
+                    state
+                  }
+                }
+              }
             }
             pageInfo {
               hasNextPage
@@ -835,6 +842,15 @@ collect_snapshot() {
         (.id | type) == "string"
         and (.isResolved | type) == "boolean"
         and (.isOutdated | type) == "boolean"
+        and (.comments.nodes | type) == "array"
+        and (.comments.nodes | length) == 1
+        and (
+          .comments.nodes[0].pullRequestReview == null
+          or (
+            .comments.nodes[0].pullRequestReview.state
+            | type
+          ) == "string"
+        )
       )
     )
   ' "$review_thread_pages" > /dev/null; then
@@ -1034,6 +1050,11 @@ collect_snapshot() {
           | flatten
           | map(.data.repository.pullRequest.reviewThreads.nodes)
           | flatten
+          | map(
+              select(
+                .comments.nodes[0].pullRequestReview.state != "PENDING"
+              )
+            )
           | map({
               kind: "review_thread",
               id: (.id | text),

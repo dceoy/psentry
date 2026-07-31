@@ -132,6 +132,8 @@ EOF
     "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "body": "Unsubmitted draft inline feedback"
   }]'
+  export GH_REVIEW_THREAD_RESOLVED=false
+  export GH_REVIEW_THREAD_REVIEW_STATE=PENDING
 
   invoke_sentry
 
