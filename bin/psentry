@@ -193,7 +193,10 @@ source_configuration() {
   PSENTRY_GITHUB_AUTHOR="${PSENTRY_GITHUB_AUTHOR:-}"
   # GitHub's search API never returns more than 1000 results for a single
   # query; defaulting to that ceiling (rather than a low, arbitrary value)
-  # ensures a stateless pass never permanently excludes older ready PRs.
+  # minimizes how easily a stateless pass could permanently exclude older
+  # ready PRs. It does not eliminate that risk: an owner/author with more
+  # than 1000 matching open PRs would still starve the oldest of them on
+  # every pass. See docs/architecture.md for why that bound is accepted.
   PSENTRY_PR_SEARCH_LIMIT="${PSENTRY_PR_SEARCH_LIMIT:-1000}"
   PSENTRY_ORACLE_BIN="${PSENTRY_ORACLE_BIN:-oracle}"
   PSENTRY_ORACLE_MODEL="${PSENTRY_ORACLE_MODEL:-gpt-5.5-pro}"

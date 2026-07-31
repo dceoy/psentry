@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+if [[ "${PSENTRY_INTERNAL_SLEEP:-0}" == 1 ]]; then
+  exec "${SYSTEM_SLEEP:?}" "$@"
+fi
+
 set +e
 timeout --foreground 0.01s "${SYSTEM_SLEEP:?}" "$@" > /dev/null 2>&1
 validation_status=$?

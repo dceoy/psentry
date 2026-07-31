@@ -285,10 +285,16 @@ Every pass processes the normalized candidate list in deterministic
 most-recently-updated order. There is no local cursor. GitHub markers skip
 unchanged PRs quickly, each Oracle review has a bounded runtime, and failures
 continue to the remaining candidates, so an early failing or slow candidate
-cannot indefinitely starve later candidates during an allowed-to-complete
-pass. Container restarts recompute the same order from current GitHub data;
-concurrent manual runs exit through `flock`; and long-running passes simply
-delay the next fixed-delay interval without overlap.
+cannot indefinitely starve later candidates within the search window during an
+allowed-to-complete pass. Container restarts recompute the same order from
+current GitHub data; concurrent manual runs exit through `flock`; and
+long-running passes simply delay the next fixed-delay interval without
+overlap.
+
+The search window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (see
+[docs/architecture.md](docs/architecture.md) for what happens, and why it is
+considered an acceptable bound today, if the owner/author filters ever match
+more open PRs than that limit).
 
 ### Upgrading from v5 markers
 

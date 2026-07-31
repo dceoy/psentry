@@ -3,39 +3,33 @@
 set -euo pipefail
 
 validate_poll_interval() {
-  local value suffix multiplier
+  local status
 
-  if [[ ! "${PSENTRY_POLL_INTERVAL}" =~ ^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[smhd]?$ ]]; then
-    printf 'ERROR: invalid PSENTRY_POLL_INTERVAL: %s\n' \
-      "${PSENTRY_POLL_INTERVAL}" >&2
-    return 2
+  # Delegate duration parsing to GNU sleep itself (via timeout) instead of
+  # maintaining a second, custom duration grammar: if sleep is still running
+  # when the minimum elapses, timeout kills it and returns 124 (valid and
+  # long enough); if sleep finishes on its own, the value was either
+  # malformed (non-zero, non-124 status) or shorter than the minimum
+  # (status 0).
+  if PSENTRY_INTERNAL_SLEEP=1 timeout --foreground \
+    "${POLL_INTERVAL_MINIMUM_SECONDS}" sleep "${PSENTRY_POLL_INTERVAL}" \
+    2> /dev/null; then
+    status=0
+  else
+    status=$?
   fi
 
-  value="${PSENTRY_POLL_INTERVAL}"
-  suffix=''
-  case "${value}" in
-    *[smhd])
-      suffix="${value: -1}"
-      value="${value%?}"
-      ;;
-  esac
-  value="${value#+}"
-  case "${suffix}" in
-    '' | s) multiplier=1 ;;
-    m) multiplier=60 ;;
-    h) multiplier=3600 ;;
-    d) multiplier=86400 ;;
-  esac
-
-  if ! awk \
-    -v value="${value}" \
-    -v multiplier="${multiplier}" \
-    -v minimum="${POLL_INTERVAL_MINIMUM_SECONDS}" \
-    'BEGIN { exit !((value * multiplier) > minimum) }'; then
+  if ((status == 124)); then
+    return 0
+  fi
+  if ((status == 0)); then
     printf 'ERROR: invalid PSENTRY_POLL_INTERVAL: %s (must be longer than 100ms)\n' \
       "${PSENTRY_POLL_INTERVAL}" >&2
-    return 2
+  else
+    printf 'ERROR: invalid PSENTRY_POLL_INTERVAL: %s\n' \
+      "${PSENTRY_POLL_INTERVAL}" >&2
   fi
+  return 2
 }
 
 cleanup() {
@@ -68,6 +62,27 @@ finish_shutdown() {
   esac
 }
 
+reap_active() {
+  # forward_signal already signaled the active process group; wait here for
+  # it to actually exit (a foreground descendant may take time, or ignore
+  # the signal) instead of returning immediately, so the caller does not
+  # exit while it is still unreaped. The backgrounded killer force-kills the
+  # group if it outlives the bounded timeout, then this waits for whichever
+  # of the two actually ends the workload.
+  local killer_pid
+
+  (
+    PSENTRY_INTERNAL_SLEEP=1 sleep "${ACTIVE_SHUTDOWN_TIMEOUT_SECONDS}"
+    kill -KILL -- "-${active_pid}" 2> /dev/null || true
+  ) &
+  killer_pid=$!
+
+  wait "${active_pid}" 2> /dev/null || true
+  kill -- "-${killer_pid}" 2> /dev/null || true
+  wait "${killer_pid}" 2> /dev/null || true
+  active_pid=''
+}
+
 run_active() {
   local completed_pid='' status
 
@@ -78,7 +93,14 @@ run_active() {
   else
     status=$?
   fi
-  if [[ "${completed_pid:-}" == "${WEBSOCKIFY_PID}" ]]; then
+
+  if [[ -z "${completed_pid:-}" ]]; then
+    reap_active
+    finish_shutdown
+    return "${status}"
+  fi
+
+  if [[ "${completed_pid}" == "${WEBSOCKIFY_PID}" ]]; then
     printf 'ERROR: noVNC proxy exited unexpectedly.\n' >&2
     kill -TERM -- "-${active_pid}" 2> /dev/null || true
     wait "${active_pid}" 2> /dev/null || true
@@ -101,7 +123,8 @@ main() {
   : "${HOME:?HOME must be set}"
   : "${USER_NAME:?USER_NAME must be set}"
   PSENTRY_POLL_INTERVAL="${PSENTRY_POLL_INTERVAL:-15m}"
-  readonly HOME USER_NAME PSENTRY_POLL_INTERVAL POLL_INTERVAL_MINIMUM_SECONDS=0.1
+  readonly HOME USER_NAME PSENTRY_POLL_INTERVAL POLL_INTERVAL_MINIMUM_SECONDS=0.1 \
+    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS="${ACTIVE_SHUTDOWN_TIMEOUT_SECONDS:-10}"
 
   if (("$(id -u)" == 0)); then
     local user_uid user_gid

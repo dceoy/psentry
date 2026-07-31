@@ -26,15 +26,27 @@ needed to recognize a later draft-to-ready transition. Drafts are never passed
 to Oracle. The normalized list keeps that deterministic most-recently-updated
 order on every pass and is not rotated through local persistence.
 
-This stateless order does not starve later candidates during normal operation:
-unchanged PRs with valid markers are skipped, each Oracle attempt has a bounded
-runtime, and a failed attempt does not stop the remaining candidates. More
-eligible PRs make a pass longer rather than imposing a per-pass work budget.
-Repeated container restarts recompute the same order from current GitHub data;
-a restart during the first review can delay later candidates, but once a pass
-is allowed to run, the bounded attempt proceeds to them. Concurrent manual
-passes exit through the global `flock`, and fixed-delay polling never overlaps
-passes.
+This stateless order does not starve later candidates within a single search
+window: unchanged PRs with valid markers are skipped, each Oracle attempt has
+a bounded runtime, and a failed attempt does not stop the remaining
+candidates. More eligible PRs make a pass longer rather than imposing a
+per-pass work budget. Repeated container restarts recompute the same order
+from current GitHub data; a restart during the first review can delay later
+candidates, but once a pass is allowed to run, the bounded attempt proceeds to
+them. Concurrent manual passes exit through the global `flock`, and
+fixed-delay polling never overlaps passes.
+
+The window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (default and
+maximum `1000`, GitHub's own search API ceiling per query). If the number of
+open pull requests matching the configured owner/author filters — ready and
+draft combined — ever exceeds that limit, the oldest matches fall outside the
+window and are excluded from every pass, not just the current one, because
+the search is stateless and newest-first: nothing rotates them back in. This
+repository does not expect that volume for a single owner/author and
+therefore does not implement search partitioning or cursor rotation to cover
+it; if it becomes a real constraint, partition the search deterministically
+(for example by repository or by `updated`/`created` date windows) or
+reintroduce bounded local rotation state.
 
 ## Normalized snapshot schema
 

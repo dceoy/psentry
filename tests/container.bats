@@ -149,6 +149,30 @@ wait_entrypoint() {
   [ "$status" -eq 143 ]
 }
 
+@test "SIGTERM waits for the active workload to actually exit before shutting down" {
+  start_entrypoint \
+    ENTRYPOINT_BLOCK_PSENTRY=1 \
+    ENTRYPOINT_TERM_DELAY=0.3
+  wait_for_event '^psentry-start:1:'
+  stop_entrypoint TERM
+
+  [ "$ENTRYPOINT_STATUS" -eq 143 ]
+  grep -q '^psentry-delayed-exit$' "$ENTRYPOINT_LOG"
+}
+
+@test "SIGTERM force-kills an active workload that outlives the shutdown timeout" {
+  start_entrypoint \
+    ENTRYPOINT_BLOCK_PSENTRY=1 \
+    ENTRYPOINT_TERM_DELAY=5 \
+    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=0.3
+  wait_for_event '^psentry-start:1:'
+  stop_entrypoint TERM
+
+  [ "$ENTRYPOINT_STATUS" -eq 143 ]
+  run grep -q '^psentry-delayed-exit$' "$ENTRYPOINT_LOG"
+  [ "$status" -eq 1 ]
+}
+
 @test "the entrypoint stops when the noVNC proxy exits" {
   export ENTRYPOINT_WEBSOCKIFY_EXIT=1
   start_entrypoint
