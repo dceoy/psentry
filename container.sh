@@ -14,6 +14,7 @@ readonly HOST_IP="${HOST_IP:-127.0.0.1}"
 readonly PORT="${PORT:-6080}"
 readonly CPUS="${CPUS:-4}"
 readonly MEMORY="${MEMORY:-4G}"
+readonly POLL_INTERVAL="${POLL_INTERVAL:-15m}"
 readonly VNC_GEOMETRY="${VNC_GEOMETRY:-1440x900}"
 readonly VNC_DEPTH="${VNC_DEPTH:-24}"
 if [[ -n "${VNC_PASSWORD:-}" ]]; then
@@ -24,9 +25,7 @@ else
 fi
 readonly CONTAINER_HOME='/home/agent'
 readonly HOME_VOLUME="${HOME_VOLUME:-psentry-home}"
-readonly CONTAINER_WORKSPACE='/workspace'
-readonly WORKSPACE_DIR="${WORKSPACE_DIR:-$(pwd)}"
-readonly MIN_MACOS_MAJOR="${MIN_MACOS_MAJOR:-26}"
+readonly MIN_MACOS_MAJOR=26
 readonly SENTRY_ORACLE_HOME="${CONTAINER_HOME}/.local/share/psentry/oracle-home"
 
 container_running() {
@@ -99,14 +98,6 @@ validate_containerfile() {
   }
 }
 
-validate_workspace_dir() {
-  [[ -d "${WORKSPACE_DIR}" ]] || {
-    printf "ERROR: WORKSPACE_DIR does not exist or is not a directory: '%s'.\n" \
-      "${WORKSPACE_DIR}" >&2
-    return 2
-  }
-}
-
 require_running() {
   container_running || {
     printf "ERROR: container '%s' is not running. Run 'make up' first.\n" "${NAME}" >&2
@@ -153,19 +144,11 @@ build() {
   container build --platform linux/arm64 --file "${CONTAINERFILE}" --tag "${IMAGE}" .
 }
 
-pull() {
-  check
-  start_container_system
-  printf "Pulling image '%s'...\n" "${IMAGE}"
-  container image pull --platform linux/arm64 "${IMAGE}"
-}
-
 up() {
   local novnc_url
   local -a container_args
 
   check
-  validate_workspace_dir
   start_container_system
   if container_running; then
     novnc_url="$(container_novnc_url)"
@@ -198,8 +181,8 @@ up() {
     --env "VNC_GEOMETRY=${VNC_GEOMETRY}"
     --env "VNC_DEPTH=${VNC_DEPTH}"
     --env "VNC_PASSWORD=${VNC_PASSWORD}"
+    --env "PSENTRY_POLL_INTERVAL=${POLL_INTERVAL}"
     --volume "${HOME_VOLUME}:${CONTAINER_HOME}"
-    --volume "${WORKSPACE_DIR}:${CONTAINER_WORKSPACE}"
   )
   container run "${container_args[@]}" "${IMAGE}" > /dev/null
   novnc_url="$(container_novnc_url)"
@@ -237,14 +220,6 @@ status() {
     printf 'Status:    not running\n'
     return 1
   fi
-}
-
-shell() {
-  check
-  start_container_system
-  require_running
-  exec container exec --interactive --tty \
-    "${NAME}" /usr/local/bin/psentry-entrypoint bash --login
 }
 
 gh_login() {
@@ -305,7 +280,7 @@ clean() {
     container image delete "${IMAGE}" > /dev/null
   fi
   if volume_exists; then
-    printf "Removing volume '%s' (including credentials, browser state, and sentry state)...\n" \
+    printf "Removing volume '%s' (including credentials, browser data, and configuration)...\n" \
       "${HOME_VOLUME}"
     container volume delete "${HOME_VOLUME}" > /dev/null
   fi
@@ -320,15 +295,12 @@ Targets:
   up            Build when needed and start the desktop container
   down          Stop the desktop container
   status        Show whether the container is running
-  shell         Open an interactive shell as the unprivileged agent user
   gh-login      Authenticate GitHub CLI in the persistent home volume
   oracle-login  Authenticate ChatGPT Web through the noVNC desktop
   run           Run one psentry pass
   dry-run       Discover and report decisions without writes
-  pull          Pull IMAGE for linux/arm64
   build         Build IMAGE locally for linux/arm64
   clean         Remove the container, image, and persistent home volume
-  check         Validate the Apple Container host requirements
   help          Show this help message
 
 Common variables:
@@ -339,11 +311,11 @@ Common variables:
   PORT=6080
   CPUS=4
   MEMORY=4G
+  POLL_INTERVAL=15m
   VNC_GEOMETRY=1440x900
   VNC_DEPTH=24
   VNC_PASSWORD=<generated for loopback use when empty>
   HOME_VOLUME=psentry-home
-  WORKSPACE_DIR=<current directory>
 EOF
 }
 
@@ -356,8 +328,8 @@ main() {
   fi
 
   case "${command}" in
-    help | check | build | pull | up | down | status | shell | \
-      gh-login | oracle-login | run | dry-run | clean)
+    help | build | up | down | status | gh-login | oracle-login | run | \
+      dry-run | clean)
       "${command//-/_}"
       ;;
     *)

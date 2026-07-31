@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+printf 'vncserver:%s\n' "$*" >> "${ENTRYPOINT_LOG:?}"

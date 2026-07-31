@@ -2,32 +2,39 @@
 
 ## One-pass flow
 
-Each timer activation runs exactly one process:
+Each `psentry` invocation runs exactly one pass:
 
 1. validate trusted configuration and required commands;
 2. acquire the non-blocking global `flock`;
 3. identify the authenticated GitHub account;
-4. load and validate the local candidate-rotation cursor;
-5. search open, non-archived pull requests with the configured owner/author
+4. search open, non-archived pull requests with the configured owner/author
    filters;
-6. collect and normalize each pull request independently;
-7. reduce the current facts and latest trusted GitHub marker to one action;
-8. invoke Oracle only for a meaningful update;
-9. re-read the PR state and head;
-10. publish a comment-only review, making GitHub acceptance the commit point.
+5. collect and normalize each pull request independently;
+6. reduce the current facts and latest trusted GitHub marker to one action;
+7. invoke Oracle only for a meaningful update;
+8. re-read the PR state and head;
+9. publish a comment-only review, making GitHub acceptance the commit point.
 
 Errors for one pull request are logged and do not prevent remaining candidates
-from being processed. The pass still exits non-zero so systemd records a
-failure.
+from being processed. The pass still exits non-zero so its caller can record
+the failure. The container entrypoint logs it, waits, and starts another pass.
 
 The sentry performs two bounded searches, ordered by most recent update so
 newly active pull requests cannot remain behind a fixed set of older results:
 `draft:false` supplies eligible work, while `draft:true` supplies observations
 needed to recognize a later draft-to-ready transition. Drafts are never passed
-to Oracle. Before each candidate attempt, the sentry atomically checkpoints
-that candidate as a rotation cursor. If the pass is interrupted, the next pass
-starts after the cursor; after a complete pass, the cursor points at the final
-candidate and the next pass returns to the original recency order.
+to Oracle. The normalized list keeps that deterministic most-recently-updated
+order on every pass and is not rotated through local persistence.
+
+This stateless order does not starve later candidates during normal operation:
+unchanged PRs with valid markers are skipped, each Oracle attempt has a bounded
+runtime, and a failed attempt does not stop the remaining candidates. More
+eligible PRs make a pass longer rather than imposing a per-pass work budget.
+Repeated container restarts recompute the same order from current GitHub data;
+a restart during the first review can delay later candidates, but once a pass
+is allowed to run, the bounded attempt proceeds to them. Concurrent manual
+passes exit through the global `flock`, and fixed-delay polling never overlaps
+passes.
 
 ## Normalized snapshot schema
 
@@ -160,24 +167,12 @@ represented by the head SHA, base ref, and exact diff digest; labels,
 assignees, milestones, and generic GitHub `updatedAt` are intentionally absent
 from the trigger projection.
 
-## Local state schema
+## Persistent state
 
-The local JSON document stores no per-PR observations or review records. It
-contains only the cursor needed to rotate candidates across interrupted or
-budget-limited passes:
-
-```json
-{
-  "version": 1,
-  "candidate_cursor": "owner/repository#123"
-}
-```
-
-Writes use `mktemp` in the state file's directory, complete JSON validation,
-mode `0600`, and `mv` on the same filesystem. This prevents partial documents.
-An absent file is a valid empty cursor; malformed or unsupported state fails
-closed. Deleting this file may change only candidate order, never review
-history or transition semantics.
+There is no local scheduling or per-PR state. GitHub markers are the only
+persistent event history, and candidate order is derived from each current
+search response. Legacy cursor files are not read, so missing or malformed
+legacy files cannot affect startup, ordering, or review decisions.
 
 ## Publication and races
 
@@ -198,9 +193,8 @@ Malformed, duplicated-key, non-canonical, spoofed-author, and foreign-identity
 markers remain external activity.
 
 Version 6 intentionally does not parse v5 markers or legacy per-PR local
-state. Upgrades remove the old local state and perform a documented one-time
-rebaseline of open PRs, after which the executable has one steady-state
-parser.
+state. Upgrades perform a documented one-time rebaseline of open PRs, after
+which the executable has one steady-state parser.
 
 Immediately before publication, the sentry collects a fresh snapshot and
 requires:
@@ -220,9 +214,9 @@ marker restores idempotency after process interruption or local data loss.
 
 ## Explicit non-goals
 
-- webhook delivery or an internal daemon loop;
+- webhook delivery or a polling loop inside the one-pass executable;
 - repository cloning or full-tree semantic context;
-- databases, Redis, queues, containers, or Kubernetes;
+- databases, Redis, queues, or Kubernetes;
 - a GitHub REST/GraphQL client outside `gh`;
 - YAML/TOML configuration or plugins;
 - automated approval or request-changes reviews;

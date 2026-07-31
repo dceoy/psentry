@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+count_file="${ENTRYPOINT_TMP:?}/psentry-count"
+count=0
+[[ ! -f "${count_file}" ]] || read -r count < "${count_file}"
+((count += 1))
+printf '%s\n' "${count}" > "${count_file}"
+printf 'psentry-start:%s:%s\n' "${count}" "$*" >> "${ENTRYPOINT_LOG:?}"
+
+if [[ "${ENTRYPOINT_FAIL_FIRST:-0}" == 1 && "${count}" -eq 1 ]]; then
+  printf 'psentry-fail:%s\n' "${count}" >> "${ENTRYPOINT_LOG}"
+  exit 9
+fi
+
+if [[ "${ENTRYPOINT_BLOCK_PSENTRY:-0}" == 1 ]]; then
+  trap 'printf "psentry-signal:INT\n" >> "${ENTRYPOINT_LOG}"; exit 130' INT
+  trap 'printf "psentry-signal:TERM\n" >> "${ENTRYPOINT_LOG}"; exit 143' TERM
+  while true; do
+    "${SYSTEM_SLEEP:?}" 1
+  done
+fi

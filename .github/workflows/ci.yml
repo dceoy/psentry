@@ -46,4 +46,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run static and offline checks
-        run: .agents/skills/local-qa/scripts/qa.sh
+        run: |
+          .agents/skills/local-qa/scripts/qa.sh
+          bats tests/container.bats

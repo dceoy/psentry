@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+set +e
+timeout --foreground 0.01s "${SYSTEM_SLEEP:?}" "$@" > /dev/null 2>&1
+validation_status=$?
+set -e
+case "${validation_status}" in
+  0 | 124) ;;
+  *) exit "${validation_status}" ;;
+esac
+
+count_file="${ENTRYPOINT_TMP:?}/sleep-count"
+count=0
+[[ ! -f "${count_file}" ]] || read -r count < "${count_file}"
+((count += 1))
+printf '%s\n' "${count}" > "${count_file}"
+
+trap 'printf "sleep-signal:INT\n" >> "${ENTRYPOINT_LOG}"; exit 130' INT
+trap 'printf "sleep-signal:TERM\n" >> "${ENTRYPOINT_LOG}"; exit 143' TERM
+printf 'sleep-start:%s:%s\n' "${count}" "$*" >> "${ENTRYPOINT_LOG:?}"
+
+if ((count <= ${ENTRYPOINT_SLEEP_RELEASES:-0})); then
+  exit 0
+fi
+if [[ "${ENTRYPOINT_BLOCK_SLEEP:-0}" == 1 ]]; then
+  while true; do
+    "${SYSTEM_SLEEP:?}" 1
+  done
+fi
+exec "${SYSTEM_SLEEP:?}" "$@"

@@ -1,0 +1,157 @@
+#!/usr/bin/env bats
+
+bats_require_minimum_version 1.5.0
+
+setup() {
+  TEST_ROOT="$(cd -- "$BATS_TEST_DIRNAME/.." && pwd)"
+  ENTRYPOINT_TMP="$BATS_TEST_TMPDIR/entrypoint"
+  ENTRYPOINT_HOME="$ENTRYPOINT_TMP/home"
+  ENTRYPOINT_LOG="$ENTRYPOINT_TMP/events.log"
+  SYSTEM_SLEEP="$(command -v sleep)"
+  mkdir -p -- "$ENTRYPOINT_HOME"
+  : > "$ENTRYPOINT_LOG"
+
+  export TEST_ROOT ENTRYPOINT_TMP ENTRYPOINT_HOME ENTRYPOINT_LOG SYSTEM_SLEEP
+  export PATH="$TEST_ROOT/tests/container-shims:$PATH"
+  export HOME="$ENTRYPOINT_HOME"
+  USER_NAME="$(id -un)"
+  export USER_NAME
+  export DISPLAY=:1
+  export VNC_GEOMETRY=1440x900
+  export VNC_DEPTH=24
+  export VNC_PASSWORD=test-password
+  export NOVNC_PORT=6080
+  export PSENTRY_POLL_INTERVAL=1s
+  export ENTRYPOINT_BLOCK_SLEEP=1
+  unset ENTRYPOINT_FAIL_FIRST ENTRYPOINT_BLOCK_PSENTRY ENTRYPOINT_SLEEP_RELEASES
+
+  ENTRYPOINT_PID=
+}
+
+teardown() {
+  if [[ -n "${ENTRYPOINT_PID}" ]] && kill -0 "${ENTRYPOINT_PID}" 2> /dev/null; then
+    kill -TERM "${ENTRYPOINT_PID}" 2> /dev/null || true
+    wait "${ENTRYPOINT_PID}" 2> /dev/null || true
+  fi
+}
+
+start_entrypoint() {
+  "$TEST_ROOT/container/entrypoint.sh" > "$ENTRYPOINT_TMP/stdout" \
+    2> "$ENTRYPOINT_TMP/stderr" &
+  ENTRYPOINT_PID=$!
+}
+
+wait_for_event() {
+  local pattern=$1
+  local attempt
+
+  for attempt in {1..100}; do
+    grep -q -- "$pattern" "$ENTRYPOINT_LOG" && return 0
+    kill -0 "$ENTRYPOINT_PID" 2> /dev/null || return 1
+    "$SYSTEM_SLEEP" 0.05
+  done
+  return 1
+}
+
+wait_for_log() {
+  local pattern=$1
+  local attempt
+
+  attempt=0
+  while ((attempt < 20)); do
+    ((attempt += 1))
+    grep -q -- "$pattern" "$ENTRYPOINT_LOG" && return 0
+    "$SYSTEM_SLEEP" 0.05
+  done
+  return 1
+}
+
+stop_entrypoint() {
+  local signal=$1
+
+  kill -s "$signal" "$ENTRYPOINT_PID"
+  if wait "$ENTRYPOINT_PID"; then
+    ENTRYPOINT_STATUS=0
+  else
+    ENTRYPOINT_STATUS=$?
+  fi
+  ENTRYPOINT_PID=
+}
+
+@test "the polling loop runs immediately and waits after each pass" {
+  start_entrypoint
+  wait_for_event '^sleep-start:1:'
+
+  mapfile -t events < <(grep -E '^(psentry-start|sleep-start):' "$ENTRYPOINT_LOG")
+  [[ "${events[0]}" == psentry-start:1:* ]]
+  [[ "${events[1]}" == sleep-start:1:* ]]
+}
+
+@test "the polling loop defaults to a 15 minute fixed delay" {
+  unset PSENTRY_POLL_INTERVAL
+  start_entrypoint
+  wait_for_event '^sleep-start:1:-- 15m$'
+}
+
+@test "the polling loop continues after a failed pass" {
+  export ENTRYPOINT_FAIL_FIRST=1
+  export ENTRYPOINT_SLEEP_RELEASES=1
+  start_entrypoint
+  wait_for_event '^psentry-start:2:'
+
+  grep -q '^psentry-fail:1$' "$ENTRYPOINT_LOG"
+  grep -q 'psentry pass failed; retrying after 1s' "$ENTRYPOINT_TMP/stderr"
+}
+
+@test "SIGTERM is forwarded during a psentry pass" {
+  export ENTRYPOINT_BLOCK_PSENTRY=1
+  start_entrypoint
+  wait_for_event '^psentry-start:1:'
+  stop_entrypoint TERM
+
+  [ "$ENTRYPOINT_STATUS" -eq 143 ]
+  wait_for_log '^psentry-signal:TERM$'
+}
+
+@test "SIGTERM is forwarded during polling sleep" {
+  start_entrypoint
+  wait_for_event '^sleep-start:1:'
+  stop_entrypoint TERM
+
+  [ "$ENTRYPOINT_STATUS" -eq 143 ]
+  wait_for_log '^sleep-signal:TERM$'
+}
+
+@test "an invalid polling interval fails before services start" {
+  export PSENTRY_POLL_INTERVAL=not-a-duration
+
+  run "$TEST_ROOT/container/entrypoint.sh"
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid PSENTRY_POLL_INTERVAL"* ]]
+  run grep -Eq '^(vncserver|websockify|psentry-start):' "$ENTRYPOINT_LOG"
+  [ "$status" -eq 1 ]
+}
+
+@test "an explicit command remains a one-pass foreground command" {
+  run "$TEST_ROOT/container/entrypoint.sh" psentry --dry-run
+
+  [ "$status" -eq 0 ]
+  grep -q '^psentry-start:1:--dry-run$' "$ENTRYPOINT_LOG"
+  run grep -q '^vncserver:' "$ENTRYPOINT_LOG"
+  [ "$status" -eq 1 ]
+}
+
+@test "container controls expose polling without a host workspace" {
+  run "$TEST_ROOT/container.sh" help
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"POLL_INTERVAL=15m"* ]]
+  [[ "$output" != *"  shell "* ]]
+  [[ "$output" != *"  pull "* ]]
+  [[ "$output" != *"  check "* ]]
+
+  run grep -F '/workspace' "$TEST_ROOT/Containerfile" "$TEST_ROOT/container.sh"
+  [ "$status" -eq 1 ]
+  grep -q "PSENTRY_POLL_INTERVAL=\${POLL_INTERVAL}" "$TEST_ROOT/container.sh"
+}
