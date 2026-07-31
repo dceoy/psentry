@@ -245,7 +245,6 @@ source_configuration() {
   local config_was_explicit=0
   local installed_prompt
   local checkout_prompt
-  local installed_reducer
   local checkout_reducer
 
   [[ -n "${ORACLE_PR_SENTRY_CONFIG_FILE:-}" ]] && config_was_explicit=1
@@ -264,18 +263,13 @@ source_configuration() {
 
   installed_prompt="${XDG_DATA_HOME}/$PROGRAM_NAME/review-prompt.md"
   checkout_prompt="${SOURCE_ROOT}/share/$PROGRAM_NAME/review-prompt.md"
-  installed_reducer="${XDG_DATA_HOME}/$PROGRAM_NAME/decision-reducer.jq"
   checkout_reducer="${SOURCE_ROOT}/share/$PROGRAM_NAME/decision-reducer.jq"
   if [[ -r "$installed_prompt" ]]; then
     ORACLE_PR_SENTRY_PROMPT_PATH="${ORACLE_PR_SENTRY_PROMPT_PATH:-$installed_prompt}"
   else
     ORACLE_PR_SENTRY_PROMPT_PATH="${ORACLE_PR_SENTRY_PROMPT_PATH:-$checkout_prompt}"
   fi
-  if [[ -r "$installed_reducer" ]]; then
-    DECISION_REDUCER_PATH=$installed_reducer
-  else
-    DECISION_REDUCER_PATH=$checkout_reducer
-  fi
+  DECISION_REDUCER_PATH=$checkout_reducer
 
   ORACLE_PR_SENTRY_GITHUB_OWNER="${ORACLE_PR_SENTRY_GITHUB_OWNER:-}"
   ORACLE_PR_SENTRY_GITHUB_AUTHOR="${ORACLE_PR_SENTRY_GITHUB_AUTHOR:-}"
@@ -558,7 +552,8 @@ collect_snapshot() {
   local number=$2
   local work_directory=$3
   local raw_pr="$work_directory/pr.json"
-  local review_pages="$work_directory/review-comments.json"
+  local review_pages="$work_directory/reviews.json"
+  local review_comment_pages="$work_directory/review-comments.json"
   local review_thread_pages="$work_directory/review-threads.json"
   local check_pages="$work_directory/check-contexts.json"
   local diff_file="$work_directory/pr.diff"
@@ -567,11 +562,12 @@ collect_snapshot() {
   local repository_owner=${repository%%/*}
   local repository_name=${repository#*/}
   local check_contexts_query
+  local reviews_query
   local review_threads_query
   local diff_digest head_sha
 
   if ! gh pr view "$number" --repo "$repository" --json \
-    number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,reviews,comments,files \
+    number,url,title,body,baseRefName,headRefName,headRefOid,isDraft,state,author,comments,files \
     > "$raw_pr"; then
     log ERROR "failed to collect PR metadata for $repository#$number"
     return 1
@@ -580,6 +576,76 @@ collect_snapshot() {
   if ! head_sha=$(jq -r '.headRefOid // ""' "$raw_pr") \
     || [[ ! "$head_sha" =~ ^[0-9A-Fa-f]{40,64}$ ]]; then
     log ERROR "GitHub returned an invalid head SHA for $repository#$number"
+    return 1
+  fi
+
+  # shellcheck disable=SC2016  # GraphQL variables must remain literal here.
+  reviews_query='
+    query(
+      $owner: String!,
+      $name: String!,
+      $number: Int!,
+      $endCursor: String
+    ) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviews(first: 100, after: $endCursor) {
+            nodes {
+              id
+              author {
+                login
+              }
+              submittedAt
+              state
+              body
+              commit {
+                oid
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+  '
+  if ! gh api graphql --paginate --slurp \
+    -f query="$reviews_query" \
+    -F owner="$repository_owner" \
+    -F name="$repository_name" \
+    -F number="$number" > "$review_pages"; then
+    log ERROR "failed to collect reviews for $repository#$number"
+    return 1
+  fi
+  if ! jq -e '
+    type == "array"
+    and length > 0
+    and all(
+      .[];
+      (.data.repository.pullRequest.reviews.nodes | type) == "array"
+      and all(
+        .data.repository.pullRequest.reviews.nodes[];
+        (.id | type) == "string"
+        and (
+          .author == null
+          or (.author.login | type) == "string"
+        )
+        and (.submittedAt | type) == "string"
+        and (.state | type) == "string"
+        and (.body | type) == "string"
+        and (
+          .commit == null
+          or (
+            (.commit.oid | type) == "string"
+            and (.commit.oid | test("^[0-9A-Fa-f]{40,64}$"))
+          )
+        )
+      )
+    )
+  ' "$review_pages" > /dev/null; then
+    log ERROR "GitHub returned invalid reviews for $repository#$number"
     return 1
   fi
 
@@ -697,7 +763,8 @@ collect_snapshot() {
   fi
 
   if ! gh api --paginate --slurp \
-    "repos/$repository/pulls/$number/comments?per_page=100" > "$review_pages"; then
+    "repos/$repository/pulls/$number/comments?per_page=100" \
+    > "$review_comment_pages"; then
     log ERROR "failed to collect inline review discussion for $repository#$number"
     return 1
   fi
@@ -770,6 +837,7 @@ collect_snapshot() {
     --arg diff_digest "$diff_digest" \
     --slurpfile check_pages "$check_pages" \
     --slurpfile review_pages "$review_pages" \
+    --slurpfile review_comment_pages "$review_comment_pages" \
     --slurpfile review_thread_pages "$review_thread_pages" '
       def text:
         (. // "") | tostring;
@@ -914,7 +982,13 @@ collect_snapshot() {
           )
         | flatten
       ) as $check_contexts
-      | ($review_pages | flatten) as $inline_comments
+      | (
+          $review_pages
+          | flatten
+          | map(.data.repository.pullRequest.reviews.nodes)
+          | flatten
+        ) as $reviews
+      | ($review_comment_pages | flatten) as $inline_comments
       | (
           $review_thread_pages
           | flatten
@@ -938,7 +1012,7 @@ collect_snapshot() {
         ) as $review_threads
       | (
           [
-            (.reviews // [])[] | {
+            $reviews[] | {
               kind: "review",
               id: (.id | text),
               author: (.author.login | text),

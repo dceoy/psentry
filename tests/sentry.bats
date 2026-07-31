@@ -77,6 +77,33 @@ EOF
   [ "$(oracle_count)" -eq 1 ]
 }
 
+@test "review marker history is recovered beyond the pr view page limit" {
+  paginated_fixture="$BATS_TEST_TMPDIR/pr-with-100-reviews.json"
+  jq '
+    .reviews = [
+      range(0; 100) as $index
+      | {
+          id: ("PRR_existing_" + ($index | tostring)),
+          author: {login: "reviewer"},
+          submittedAt: "2026-07-29T09:00:00Z",
+          state: "COMMENTED",
+          body: ("Existing review " + ($index | tostring)),
+          commit: {oid: .headRefOid}
+        }
+    ]
+  ' "$READY_FIXTURE" > "$paginated_fixture"
+  export GH_FIXTURE="$paginated_fixture"
+  export GH_TRUNCATE_PR_VIEW_REVIEWS=1
+
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
+}
+
 @test "normalized PR metadata mutations trigger the tabled review reason" {
   while IFS=$'\t' read -r name patch expected_reason; do
     scenario_root="$BATS_TEST_TMPDIR/$name"
@@ -1163,6 +1190,18 @@ EOF
   [ "$status" -ne 0 ]
   [ ! -e "$side_effect" ]
   [[ "$output" == *"trusted file must not be group- or world-writable"* ]]
+}
+
+@test "the executable ignores a stale reducer in the user data directory" {
+  stale_reducer_directory="$TEST_HOME/.local/share/oracle-pr-sentry"
+  mkdir -p -- "$stale_reducer_directory"
+  printf '%s\n' 'error("stale reducer must not run")' \
+    > "$stale_reducer_directory/decision-reducer.jq"
+
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
 }
 
 @test "the container always uses the image-owned review prompt" {

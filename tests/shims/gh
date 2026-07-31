@@ -63,7 +63,8 @@ append_publications() {
 
   jq \
     --argjson bodies "$posted_bodies" '
-      .reviews += [
+      .headRefOid as $head_oid
+      | .reviews += [
         $bodies
         | to_entries[]
         | {
@@ -74,7 +75,7 @@ append_publications() {
             ),
             state: "COMMENTED",
             body: .value,
-            commit: {oid: .headRefOid}
+            commit: {oid: $head_oid}
           }
       ]
     ' "$fixture"
@@ -149,6 +150,33 @@ case "${1:-} ${2:-}" in
             }
           }]
         '
+    elif [[ "$*" == *"reviews(first: 100"* ]]; then
+      number=1
+      for argument in "$@"; do
+        if [[ "$argument" == number=* ]]; then
+          number=${argument#number=}
+        fi
+      done
+      fixture_variable="GH_FIXTURE_$number"
+      fixture=${!fixture_variable:-$GH_FIXTURE}
+      reviews=$(append_publications "$fixture" "$number" | jq -c '.reviews // []')
+      jq -cn --argjson reviews "$reviews" '
+        [{
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: {
+                  nodes: $reviews,
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: null
+                  }
+                }
+              }
+            }
+          }
+        }]
+      '
     else
       if [[ -z "${GH_REVIEW_THREAD_RESOLVED:-}" ]]; then
         review_threads='[]'
@@ -225,6 +253,11 @@ case "${1:-} ${2:-}" in
           .number = $number
           | .url = ("https://github.com/" + $repository + "/pull/" + ($number | tostring))
         ' \
+      | if [[ "${GH_TRUNCATE_PR_VIEW_REVIEWS:-0}" == 1 ]]; then
+        jq '.reviews = .reviews[:100]'
+      else
+        jq .
+      fi \
       | if [[ "${GH_RACE_HEAD:-0}" == 1 && "$view_count" -gt 1 ]]; then
         jq '.headRefOid = "cccccccccccccccccccccccccccccccccccccccc"'
       elif [[ "${GH_RACE_REQUIREMENTS:-0}" == 1 && "$view_count" -gt 1 ]]; then
