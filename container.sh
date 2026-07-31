@@ -226,8 +226,25 @@ gh_login() {
   check
   start_container_system
   require_running
+  # Acquire psentry's own global lock before driving gh auth login, so a
+  # scheduled poll pass cannot read/write GitHub state while the credential
+  # or selected account is being changed interactively. Fail fast rather
+  # than blocking: a poll pass can run for as long as an Oracle review,
+  # which is too long to leave an interactive login silently hanging.
+  # shellcheck disable=SC2016 # expands inside the container-side `bash -c`, not here
   exec container exec --interactive --tty \
-    "${NAME}" /usr/local/bin/psentry-entrypoint gh auth login
+    "${NAME}" /usr/local/bin/psentry-entrypoint \
+    bash -c '
+      set -euo pipefail
+      lock_file=$(psentry --print-lock-file)
+      mkdir -p -- "$(dirname -- "${lock_file}")"
+      exec {LOCK_FD}> "${lock_file}"
+      if ! flock -n "${LOCK_FD}"; then
+        printf "ERROR: a psentry pass is currently running; wait for it to finish, then retry gh-login.\n" >&2
+        exit 1
+      fi
+      exec gh auth login
+    ' bash
 }
 
 oracle_login() {

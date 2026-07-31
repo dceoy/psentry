@@ -1320,3 +1320,16 @@ EOF
   run grep -F '.config/systemd/user/psentry.timer' "$TEST_ROOT/README.md"
   [ "$status" -eq 0 ]
 }
+
+@test "README documents stopping an already-running native service before removing units" {
+  run grep -F 'systemctl --user stop psentry.service' "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "gh-login serializes with a running pass via the shared lock" {
+  run grep -A24 -F 'gh_login()' "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'psentry --print-lock-file'* ]]
+  [[ "$output" == *"flock -n \"\${LOCK_FD}\""* ]]
+  [[ "$output" == *'exec gh auth login'* ]]
+}

@@ -315,10 +315,14 @@ container. Deleting `systemd/` and the `enable`/`disable`/`uninstall`
 lifecycle commands from this repository does not stop or remove a timer a
 prior version already installed: on an upgraded machine it keeps running the
 old polling interval alongside the new container poller, and both would then
-contend for the same Oracle/Chromium profile. Before running `make up` on a
-machine that previously ran the native timer, disable and remove it once:
+contend for the same Oracle/Chromium profile. `systemctl --user disable --now
+psentry.timer` only prevents future activations; it does not stop a oneshot
+`psentry.service` run the timer already started, so a review can keep running
+after these files are deleted. Before running `make up` on a machine that
+previously ran the native timer, stop, disable, and remove it once:
 
 ```console
+systemctl --user stop psentry.service
 systemctl --user disable --now psentry.timer
 rm -f ~/.config/systemd/user/psentry.timer ~/.config/systemd/user/psentry.service \
   ~/.local/bin/psentry ~/.local/share/psentry/review-prompt.md \
