@@ -201,6 +201,21 @@ wait_entrypoint() {
   grep -q 'noVNC proxy exited unexpectedly' "$ENTRYPOINT_TMP/stderr"
 }
 
+@test "the noVNC exit path force-kills a psentry pass that outlives the shutdown timeout" {
+  start_entrypoint \
+    ENTRYPOINT_BLOCK_PSENTRY=1 \
+    ENTRYPOINT_TERM_DELAY=5 \
+    ENTRYPOINT_WEBSOCKIFY_EXIT_AFTER_PSENTRY=1 \
+    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=0.3
+  wait_entrypoint
+
+  [ "$ENTRYPOINT_STATUS" -eq 1 ]
+  grep -q '^websockify-exit:1$' "$ENTRYPOINT_LOG"
+  grep -q '^psentry-signal:TERM$' "$ENTRYPOINT_LOG"
+  run grep -q '^psentry-delayed-exit$' "$ENTRYPOINT_LOG"
+  [ "$status" -eq 1 ]
+}
+
 @test "an invalid polling interval fails before services start" {
   run env PSENTRY_POLL_INTERVAL=not-a-duration "$TEST_ROOT/container/entrypoint.sh"
 

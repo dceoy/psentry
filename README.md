@@ -286,10 +286,16 @@ most-recently-updated order. There is no local cursor. GitHub markers skip
 unchanged PRs quickly, each Oracle review has a bounded runtime, and failures
 continue to the remaining candidates, so an early failing or slow candidate
 cannot indefinitely starve later candidates within the search window during an
-allowed-to-complete pass. Container restarts recompute the same order from
-current GitHub data; concurrent manual runs exit through `flock`; and
+allowed-to-complete pass. Concurrent manual runs exit through `flock`, and
 long-running passes simply delay the next fixed-delay interval without
 overlap.
+
+Repeated container restarts are an accepted exception to that guarantee: if
+the container keeps restarting before the first candidate's Oracle review
+completes or reaches its bounded timeout, every restart retries that same
+candidate and later candidates may never be attempted, because an
+interrupted review publishes no marker to distinguish it from an unstarted
+one (see [docs/architecture.md](docs/architecture.md)).
 
 The search window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (see
 [docs/architecture.md](docs/architecture.md) for what happens, and why it is

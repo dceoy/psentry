@@ -27,14 +27,24 @@ to Oracle. The normalized list keeps that deterministic most-recently-updated
 order on every pass and is not rotated through local persistence.
 
 This stateless order does not starve later candidates within a single search
-window: unchanged PRs with valid markers are skipped, each Oracle attempt has
-a bounded runtime, and a failed attempt does not stop the remaining
-candidates. More eligible PRs make a pass longer rather than imposing a
-per-pass work budget. Repeated container restarts recompute the same order
-from current GitHub data; a restart during the first review can delay later
-candidates, but once a pass is allowed to run, the bounded attempt proceeds to
-them. Concurrent manual passes exit through the global `flock`, and
-fixed-delay polling never overlaps passes.
+window that is allowed to run to completion: unchanged PRs with valid markers
+are skipped, each Oracle attempt has a bounded runtime, and a failed attempt
+does not stop the remaining candidates. More eligible PRs make a pass longer
+rather than imposing a per-pass work budget. Concurrent manual passes exit
+through the global `flock`, and fixed-delay polling never overlaps passes.
+
+Repeated container restarts are a different, unresolved risk: restarting
+recomputes the same newest-first order from current GitHub data, so if the
+container is restarted before the first candidate's Oracle review completes
+or reaches its bounded timeout, every restart retries that same candidate
+from scratch, and later eligible candidates may never be attempted. This is
+an accepted tradeoff of removing local cursor state (#24): an interrupted
+review publishes no GitHub marker, so nothing in the search results or marker
+history can distinguish a candidate that keeps failing to finish from one
+that has not started yet, and no ordering rule derived purely from current
+GitHub data can rotate past it. If sustained restart loops become a real
+operational concern, reintroduce bounded local rotation state scoped to that
+case rather than reworking the stateless ordering.
 
 The window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (default and
 maximum `1000`, GitHub's own search API ceiling per query). If the number of

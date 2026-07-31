@@ -103,8 +103,7 @@ run_active() {
   if [[ "${completed_pid}" == "${WEBSOCKIFY_PID}" ]]; then
     printf 'ERROR: noVNC proxy exited unexpectedly.\n' >&2
     kill -TERM -- "-${active_pid}" 2> /dev/null || true
-    wait "${active_pid}" 2> /dev/null || true
-    active_pid=''
+    reap_active
     return 1
   fi
   active_pid=''
