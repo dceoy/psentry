@@ -112,7 +112,7 @@ EOF
   jq '
     .reviews += [{
       id: "PRR_pending",
-      databaseId: 991,
+      fullDatabaseId: "4826326972",
       author: {login: "sentry-bot"},
       submittedAt: null,
       state: "PENDING",
@@ -123,7 +123,7 @@ EOF
   export GH_FIXTURE="$pending_review_fixture"
   export GH_INLINE_COMMENTS_JSON='[{
     "id": 42,
-    "pull_request_review_id": 991,
+    "pull_request_review_id": 4826326972,
     "user": {"login": "sentry-bot"},
     "created_at": "2026-07-29T13:00:00Z",
     "updated_at": "2026-07-29T13:00:00Z",

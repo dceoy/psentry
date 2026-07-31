@@ -164,7 +164,9 @@ case "${1:-} ${2:-}" in
         | to_entries
         | map(
             .value + {
-              databaseId: (.value.databaseId // (1000 + .key))
+              fullDatabaseId: (
+                .value.fullDatabaseId // ((1000 + .key) | tostring)
+              )
             }
           )
       ')

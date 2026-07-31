@@ -602,7 +602,7 @@ collect_snapshot() {
           ) {
             nodes {
               id
-              databaseId
+              fullDatabaseId
               author {
                 login
               }
@@ -639,12 +639,8 @@ collect_snapshot() {
       and all(
         .data.repository.pullRequest.reviews.nodes[];
         (.id | type) == "string"
-        and (
-          .databaseId
-          | type == "number"
-          and floor == .
-          and . > 0
-        )
+        and (.fullDatabaseId | type) == "string"
+        and (.fullDatabaseId | test("^[1-9][0-9]*$"))
         and (
           .author == null
           or (.author.login | type) == "string"
@@ -1032,7 +1028,7 @@ collect_snapshot() {
         ) as $reviews
       | (
           $all_reviews
-          | map(select(.state == "PENDING") | .databaseId)
+          | map(select(.state == "PENDING") | .fullDatabaseId)
           | unique
         ) as $pending_review_ids
       | (
@@ -1040,7 +1036,7 @@ collect_snapshot() {
           | flatten
           | map(
               select(
-                .pull_request_review_id as $review_id
+                (.pull_request_review_id | tostring) as $review_id
                 | ($pending_review_ids | index($review_id) | not)
               )
             )
