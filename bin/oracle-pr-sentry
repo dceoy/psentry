@@ -592,10 +592,17 @@ collect_snapshot() {
           reviews(
             first: 100,
             after: $endCursor,
-            states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]
+            states: [
+              APPROVED,
+              CHANGES_REQUESTED,
+              COMMENTED,
+              DISMISSED,
+              PENDING
+            ]
           ) {
             nodes {
               id
+              databaseId
               author {
                 login
               }
@@ -633,11 +640,22 @@ collect_snapshot() {
         .data.repository.pullRequest.reviews.nodes[];
         (.id | type) == "string"
         and (
+          .databaseId
+          | type == "number"
+          and floor == .
+          and . > 0
+        )
+        and (
           .author == null
           or (.author.login | type) == "string"
         )
-        and (.submittedAt | type) == "string"
         and (.state | type) == "string"
+        and (
+          if .state == "PENDING"
+          then .submittedAt == null
+          else (.submittedAt | type) == "string"
+          end
+        )
         and (.body | type) == "string"
         and (
           .commit == null
@@ -991,8 +1009,26 @@ collect_snapshot() {
           | flatten
           | map(.data.repository.pullRequest.reviews.nodes)
           | flatten
+        ) as $all_reviews
+      | (
+          $all_reviews
+          | map(select(.state != "PENDING"))
         ) as $reviews
-      | ($review_comment_pages | flatten) as $inline_comments
+      | (
+          $all_reviews
+          | map(select(.state == "PENDING") | .databaseId)
+          | unique
+        ) as $pending_review_ids
+      | (
+          $review_comment_pages
+          | flatten
+          | map(
+              select(
+                .pull_request_review_id as $review_id
+                | ($pending_review_ids | index($review_id) | not)
+              )
+            )
+        ) as $inline_comments
       | (
           $review_thread_pages
           | flatten
