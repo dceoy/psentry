@@ -87,7 +87,13 @@ container exec --interactive --tty psentry \
 ```
 
 Each pass re-reads this file, so the change applies on the next scheduled
-pass (or immediately with `make run`).
+pass (or immediately with `make run`). If `HOME_VOLUME` was created before
+`config/env.example`'s default `PSENTRY_PR_SEARCH_LIMIT` changed from `50`
+to `1000`, the volume still has the old explicit `50` seeded into it;
+`cp -an` never overwrites it, so it is not picked up automatically. Edit it
+in place with the command above to get the higher default and avoid
+permanently missing older eligible PRs (see
+[docs/architecture.md](docs/architecture.md) for why that bound exists).
 
 The container starts one pass immediately, waits 15 minutes after it completes,
 and repeats. A failed pass is logged and does not stop polling. Change the

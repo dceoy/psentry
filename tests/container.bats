@@ -197,6 +197,24 @@ wait_entrypoint() {
   [ "$status" -ne 0 ]
 }
 
+@test "the SIGKILL backstop waits for a child that outlives the leader" {
+  start_entrypoint \
+    ENTRYPOINT_BLOCK_PSENTRY=1 \
+    ENTRYPOINT_CHILD_IGNORES_TERM=1 \
+    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=0.3
+  wait_for_event '^psentry-start:1:'
+  wait_for_log '^psentry-child-start$'
+  local child_pid
+  read -r child_pid < "$ENTRYPOINT_TMP/psentry-child.pid"
+  [ -n "$child_pid" ]
+  stop_entrypoint TERM
+
+  [ "$ENTRYPOINT_STATUS" -eq 143 ]
+  wait_for_log '^psentry-signal:TERM$'
+  run kill -0 "$child_pid"
+  [ "$status" -ne 0 ]
+}
+
 @test "the entrypoint stops when the noVNC proxy exits" {
   export ENTRYPOINT_WEBSOCKIFY_EXIT=1
   start_entrypoint

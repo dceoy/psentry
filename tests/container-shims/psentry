@@ -17,6 +17,22 @@ fi
 if [[ "${ENTRYPOINT_BLOCK_PSENTRY:-0}" == 1 ]]; then
   printf '%s\n' "$$" > "${ENTRYPOINT_TMP:?}/psentry.pid"
   trap 'printf "psentry-signal:INT\n" >> "${ENTRYPOINT_LOG}"; exit 130' INT
+
+  if [[ "${ENTRYPOINT_CHILD_IGNORES_TERM:-0}" == 1 ]]; then
+    # Simulate a foreground descendant that ignores TERM and outlives its
+    # parent, like bin/psentry's Oracle subprocess: this leader exits on
+    # TERM immediately, before the child does, so a fix must keep tracking
+    # the whole process group instead of stopping once the leader PID exits.
+    (
+      trap '' TERM
+      "${SYSTEM_SLEEP:?}" 100
+    ) &
+    printf '%s\n' "$!" > "${ENTRYPOINT_TMP:?}/psentry-child.pid"
+    printf 'psentry-child-start\n' >> "${ENTRYPOINT_LOG}"
+    trap 'printf "psentry-signal:TERM\n" >> "${ENTRYPOINT_LOG}"; exit 143' TERM
+    wait
+  fi
+
   trap '
     printf "psentry-signal:TERM\n" >> "${ENTRYPOINT_LOG}"
     "${SYSTEM_SLEEP:?}" "${ENTRYPOINT_TERM_DELAY:-0}"

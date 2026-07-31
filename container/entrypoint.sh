@@ -80,9 +80,13 @@ reap_active() {
   # A second INT/TERM while this is blocked interrupts `wait` (via the
   # forward_signal trap) before the child actually exits, so a single wait
   # call is not sufficient evidence of exit; loop until the PID is actually
-  # gone, bounded by the killer's SIGKILL deadline above.
-  while kill -0 "${active_pid}" 2> /dev/null; do
-    wait "${active_pid}" 2> /dev/null || true
+  # gone, bounded by the killer's SIGKILL deadline above. Check the process
+  # group rather than just the leader PID: if the leader (e.g. bin/psentry)
+  # exits on TERM while a foreground descendant (e.g. its Oracle subprocess)
+  # ignores or delays TERM, that descendant remains in group -${active_pid}
+  # even though `kill -0 "${active_pid}"` alone would already report false.
+  while kill -0 -- "-${active_pid}" 2> /dev/null; do
+    wait "${active_pid}" 2> /dev/null || PSENTRY_INTERNAL_SLEEP=1 sleep 0.05
   done
   kill -- "-${killer_pid}" 2> /dev/null || true
   wait "${killer_pid}" 2> /dev/null || true
