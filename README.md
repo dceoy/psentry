@@ -308,6 +308,24 @@ The search window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (see
 considered an acceptable bound today, if the owner/author filters ever match
 more open PRs than that limit).
 
+### Migrating from the native systemd timer
+
+Earlier versions installed a `systemd --user` timer instead of running in a
+container. Deleting `systemd/` and the `enable`/`disable`/`uninstall`
+lifecycle commands from this repository does not stop or remove a timer a
+prior version already installed: on an upgraded machine it keeps running the
+old polling interval alongside the new container poller, and both would then
+contend for the same Oracle/Chromium profile. Before running `make up` on a
+machine that previously ran the native timer, disable and remove it once:
+
+```console
+systemctl --user disable --now psentry.timer
+rm -f ~/.config/systemd/user/psentry.timer ~/.config/systemd/user/psentry.service \
+  ~/.local/bin/psentry ~/.local/share/psentry/review-prompt.md \
+  ~/.local/share/psentry/decision-reducer.jq
+systemctl --user daemon-reload
+```
+
 ### Upgrading from v5 markers
 
 Version 6 deliberately has no v5 marker or local per-PR state compatibility

@@ -238,17 +238,34 @@ oracle_login() {
   require_running
   novnc_url="$(container_novnc_url)"
   printf 'Complete the ChatGPT login in noVNC: %s\n' "${novnc_url}"
+  # Acquire psentry's own global lock (the same lock file bin/psentry
+  # resolves) before driving the browser, so a scheduled poll pass cannot
+  # run Oracle concurrently with this manual login against the same
+  # Oracle/Chromium profile. Fail fast rather than blocking: an Oracle
+  # review can run for the length of a poll pass, which is too long to
+  # leave an interactive login silently hanging.
+  # shellcheck disable=SC2016 # expands inside the container-side `bash -c`, not here
   exec container exec --interactive --tty \
     "${NAME}" /usr/local/bin/psentry-entrypoint \
-    env -u ORACLE_BROWSER_PROFILE_DIR \
-    "ORACLE_HOME_DIR=${SENTRY_ORACLE_HOME}" \
-    oracle \
-    --engine browser \
-    --browser-manual-login \
-    --browser-manual-login-profile-dir "${SENTRY_ORACLE_HOME}/browser-profile" \
-    --browser-keep-browser \
-    --browser-input-timeout 5m \
-    --prompt 'Initialize the psentry browser profile'
+    bash -c '
+      set -euo pipefail
+      oracle_home_dir=$1
+      lock_file=$(psentry --print-lock-file)
+      mkdir -p -- "$(dirname -- "${lock_file}")"
+      exec {LOCK_FD}> "${lock_file}"
+      if ! flock -n "${LOCK_FD}"; then
+        printf "ERROR: a psentry pass is currently running; wait for it to finish, then retry oracle-login.\n" >&2
+        exit 1
+      fi
+      exec env -u ORACLE_BROWSER_PROFILE_DIR "ORACLE_HOME_DIR=${oracle_home_dir}" \
+        oracle \
+        --engine browser \
+        --browser-manual-login \
+        --browser-manual-login-profile-dir "${oracle_home_dir}/browser-profile" \
+        --browser-keep-browser \
+        --browser-input-timeout 5m \
+        --prompt "Initialize the psentry browser profile"
+    ' bash "${SENTRY_ORACLE_HOME}"
 }
 
 run() {

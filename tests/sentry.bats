@@ -1077,6 +1077,26 @@ EOF
   [[ "$output" == *"holds the global lock"* ]]
 }
 
+@test "--print-lock-file reports the resolved lock path without running a pass" {
+  invoke_sentry --print-lock-file
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TEST_RUNTIME_DIR/sentry.lock" ]
+  [ "$(review_count)" -eq 0 ]
+  [ "$(oracle_count)" -eq 0 ]
+  [ ! -f "$GH_SHIM_STATE_DIR/gh.log" ]
+  [ ! -e "$TEST_RUNTIME_DIR/sentry.lock" ]
+  [ -z "$(find "$TEST_RUNTIME_DIR" -mindepth 1)" ]
+}
+
+@test "--print-lock-file does not contend with a held lock" {
+  export FLOCK_BUSY=1
+  invoke_sentry --print-lock-file
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TEST_RUNTIME_DIR/sentry.lock" ]
+}
+
 @test "a malformed legacy state file is ignored" {
   legacy_state="$TEST_HOME/.local/state/psentry/state.json"
   mkdir -p -- "$(dirname "$legacy_state")"
@@ -1282,5 +1302,21 @@ EOF
   run grep -F \
     'so run the desktop only alongside trusted containers.' \
     "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "oracle-login serializes with a running pass via the shared lock" {
+  run grep -F 'psentry --print-lock-file' "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F "flock -n \"\${LOCK_FD}\"" "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "README documents removing a previously installed native systemd timer" {
+  run grep -F 'systemctl --user disable --now psentry.timer' "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+
+  run grep -F '.config/systemd/user/psentry.timer' "$TEST_ROOT/README.md"
   [ "$status" -eq 0 ]
 }
