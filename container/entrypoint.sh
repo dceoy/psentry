@@ -5,7 +5,7 @@ set -euo pipefail
 : "${HOME:?HOME must be set}"
 : "${USER_NAME:?USER_NAME must be set}"
 PSENTRY_POLL_INTERVAL="${PSENTRY_POLL_INTERVAL:-15m}"
-readonly HOME USER_NAME PSENTRY_POLL_INTERVAL
+readonly HOME USER_NAME PSENTRY_POLL_INTERVAL POLL_INTERVAL_MINIMUM_SECONDS=0.1
 
 if (("$(id -u)" == 0)); then
   user_uid="$(id -u "${USER_NAME}")"
@@ -39,18 +39,39 @@ fi
 : "${VNC_PASSWORD:?VNC_PASSWORD must be set}"
 
 validate_poll_interval() {
-  local status
+  local value suffix multiplier
 
-  if timeout --foreground 0.01s sleep -- "${PSENTRY_POLL_INTERVAL}"; then
-    return 0
-  else
-    status=$?
-  fi
-  [[ "${status}" -eq 124 ]] || {
+  if [[ ! "${PSENTRY_POLL_INTERVAL}" =~ ^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[smhd]?$ ]]; then
     printf 'ERROR: invalid PSENTRY_POLL_INTERVAL: %s\n' \
       "${PSENTRY_POLL_INTERVAL}" >&2
     return 2
-  }
+  fi
+
+  value="${PSENTRY_POLL_INTERVAL}"
+  suffix=''
+  case "${value}" in
+    *[smhd])
+      suffix="${value: -1}"
+      value="${value%?}"
+      ;;
+  esac
+  value="${value#+}"
+  case "${suffix}" in
+    '' | s) multiplier=1 ;;
+    m) multiplier=60 ;;
+    h) multiplier=3600 ;;
+    d) multiplier=86400 ;;
+  esac
+
+  if ! awk \
+    -v value="${value}" \
+    -v multiplier="${multiplier}" \
+    -v minimum="${POLL_INTERVAL_MINIMUM_SECONDS}" \
+    'BEGIN { exit !((value * multiplier) > minimum) }'; then
+    printf 'ERROR: invalid PSENTRY_POLL_INTERVAL: %s (must be longer than 100ms)\n' \
+      "${PSENTRY_POLL_INTERVAL}" >&2
+    return 2
+  fi
 }
 
 validate_poll_interval
@@ -112,14 +133,21 @@ finish_shutdown() {
 }
 
 run_active() {
-  local status
+  local completed_pid='' status
 
   "${@}" &
   active_pid=$!
-  if wait "${active_pid}"; then
+  if wait -n -p completed_pid "${active_pid}" "${WEBSOCKIFY_PID}"; then
     status=0
   else
     status=$?
+  fi
+  if [[ "${completed_pid:-}" == "${WEBSOCKIFY_PID}" ]]; then
+    printf 'ERROR: noVNC proxy exited unexpectedly.\n' >&2
+    kill -TERM -- "-${active_pid}" 2> /dev/null || true
+    wait "${active_pid}" 2> /dev/null || true
+    active_pid=''
+    return 1
   fi
   active_pid=''
   finish_shutdown

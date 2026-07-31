@@ -98,10 +98,11 @@ make down
 make up POLL_INTERVAL=1h
 ```
 
-`POLL_INTERVAL` is passed directly to GNU `sleep`; `15m` is the default and
-`1h` is the primary lower-frequency alternative. Invalid values make the
-container fail during startup. Manual checks remain available and keep the
-same global overlap protection as the polling process:
+`POLL_INTERVAL` is passed directly to GNU `sleep`; values must be longer than
+100ms. `15m` is the default and `1h` is the primary lower-frequency
+alternative. Invalid values make the container fail during startup. Manual
+checks remain available and keep the same global overlap protection as the
+polling process:
 
 ```console
 make dry-run

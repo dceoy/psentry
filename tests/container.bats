@@ -24,6 +24,7 @@ setup() {
   export PSENTRY_POLL_INTERVAL=1s
   export ENTRYPOINT_BLOCK_SLEEP=1
   unset ENTRYPOINT_FAIL_FIRST ENTRYPOINT_BLOCK_PSENTRY ENTRYPOINT_SLEEP_RELEASES
+  unset ENTRYPOINT_WEBSOCKIFY_EXIT_AFTER_PSENTRY
 
   ENTRYPOINT_PID=
 }
@@ -36,7 +37,7 @@ teardown() {
 }
 
 start_entrypoint() {
-  "$TEST_ROOT/container/entrypoint.sh" > "$ENTRYPOINT_TMP/stdout" \
+  env "$@" "$TEST_ROOT/container/entrypoint.sh" > "$ENTRYPOINT_TMP/stdout" \
     2> "$ENTRYPOINT_TMP/stderr" &
   ENTRYPOINT_PID=$!
 }
@@ -70,6 +71,15 @@ stop_entrypoint() {
   local signal=$1
 
   kill -s "$signal" "$ENTRYPOINT_PID"
+  if wait "$ENTRYPOINT_PID"; then
+    ENTRYPOINT_STATUS=0
+  else
+    ENTRYPOINT_STATUS=$?
+  fi
+  ENTRYPOINT_PID=
+}
+
+wait_entrypoint() {
   if wait "$ENTRYPOINT_PID"; then
     ENTRYPOINT_STATUS=0
   else
@@ -138,15 +148,36 @@ stop_entrypoint() {
   grep -q 'noVNC proxy exited unexpectedly' "$ENTRYPOINT_TMP/stderr"
 }
 
-@test "an invalid polling interval fails before services start" {
-  export PSENTRY_POLL_INTERVAL=not-a-duration
+@test "the entrypoint stops when the noVNC proxy exits during a psentry pass" {
+  start_entrypoint \
+    ENTRYPOINT_BLOCK_PSENTRY=1 \
+    ENTRYPOINT_WEBSOCKIFY_EXIT_AFTER_PSENTRY=1
+  wait_entrypoint
 
-  run "$TEST_ROOT/container/entrypoint.sh"
+  [ "$ENTRYPOINT_STATUS" -eq 1 ]
+  grep -q '^websockify-exit:1$' "$ENTRYPOINT_LOG"
+  grep -q '^psentry-signal:TERM$' "$ENTRYPOINT_LOG"
+  grep -q 'noVNC proxy exited unexpectedly' "$ENTRYPOINT_TMP/stderr"
+}
+
+@test "an invalid polling interval fails before services start" {
+  run env PSENTRY_POLL_INTERVAL=not-a-duration "$TEST_ROOT/container/entrypoint.sh"
 
   [ "$status" -eq 2 ]
   [[ "$output" == *"invalid PSENTRY_POLL_INTERVAL"* ]]
   run grep -Eq '^(vncserver|websockify|psentry-start):' "$ENTRYPOINT_LOG"
   [ "$status" -eq 1 ]
+}
+
+@test "zero and sub-minimum polling intervals fail before services start" {
+  for interval in 0 0.01s; do
+    run env PSENTRY_POLL_INTERVAL="$interval" "$TEST_ROOT/container/entrypoint.sh"
+
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"invalid PSENTRY_POLL_INTERVAL"* ]]
+    run grep -Eq '^(vncserver|websockify|psentry-start):' "$ENTRYPOINT_LOG"
+    [ "$status" -eq 1 ]
+  done
 }
 
 @test "an explicit command remains a one-pass foreground command" {
