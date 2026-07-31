@@ -9,15 +9,61 @@ setup() {
   setup_sentry_test
 }
 
-@test "an empty first-run state schedules and records a new eligible PR" {
+@test "the decision reducer covers the transition matrix and precedence" {
+  base_current='{
+    "draft": false,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "input_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+    "context_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+    "external_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "ci_failures": []
+  }'
+
+  while IFS=$'\t' read -r name previous_patch current_patch expected_action expected_reason; do
+    [[ -n "$name" ]] || continue
+    current=$(jq -c "$current_patch" <<< "$base_current")
+    if [[ "$previous_patch" == null ]]; then
+      previous=null
+    else
+      previous=$(jq -c "$previous_patch" <<< "$base_current")
+    fi
+    result=$(jq -cn \
+      --argjson current "$current" \
+      --argjson previous "$previous" \
+      '{current: $current, previous: $previous}' \
+      | jq -c -f "$TEST_ROOT/share/oracle-pr-sentry/decision-reducer.jq")
+
+    actual=$(jq -r '[.action, (.reason | tostring)] | @tsv' <<< "$result")
+    [ "$actual" = "$expected_action"$'\t'"$expected_reason" ] || {
+      printf 'transition failed: %s\nresult: %s\n' "$name" "$result" >&2
+      return 1
+    }
+  done << 'EOF'
+new ready	null	.	review	new-pr
+new draft	null	.draft = true	baseline	null
+identical	.	.	none	null
+draft ready	.draft = true	.	review	draft-to-ready
+draft precedence	.draft = true	.head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"	review	draft-to-ready
+head changed	.	.head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"	review	head-sha-changed
+head precedence	.	.head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" | .ci_failures = [{"workflow":"CI","name":"test"}]	review	head-sha-changed
+CI added	.	.ci_failures = [{"workflow":"CI","name":"test"}]	review	ci-failure
+CI shrank	.ci_failures = [{"workflow":"CI","name":"lint"},{"workflow":"CI","name":"test"}]	.input_fingerprint = "4444444444444444444444444444444444444444444444444444444444444444" | .ci_failures = [{"workflow":"CI","name":"test"}]	baseline	null
+CI recovered	.ci_failures = [{"workflow":"CI","name":"test"}]	.input_fingerprint = "4444444444444444444444444444444444444444444444444444444444444444"	baseline	null
+external changed	.	.external_digest = "4444444444444444444444444444444444444444444444444444444444444444"	review	external-activity
+context changed	.	.context_fingerprint = "4444444444444444444444444444444444444444444444444444444444444444"	review	review-input-changed
+draft changed	.	.draft = true	baseline	null
+EOF
+}
+
+@test "an empty first-run state schedules a new eligible PR and stores only the cursor" {
   invoke_sentry
 
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
   jq -e '
     .version == 1
-    and .prs["octo/example#1"].reviewed.fingerprint != null
-    and .prs["octo/example#1"].reviewed.publication_status == "published"
+    and .candidate_cursor == "octo/example#1"
+    and (keys | sort) == ["candidate_cursor", "version"]
   ' "$ORACLE_PR_SENTRY_STATE_FILE"
 }
 
@@ -31,16 +77,36 @@ setup() {
   [ "$(oracle_count)" -eq 1 ]
 }
 
-@test "a changed head SHA schedules a new review" {
-  invoke_sentry
-  [ "$status" -eq 0 ]
+@test "normalized PR metadata mutations trigger the tabled review reason" {
+  while IFS=$'\t' read -r name patch expected_reason; do
+    scenario_root="$BATS_TEST_TMPDIR/$name"
+    export GH_SHIM_STATE_DIR="$scenario_root/shim"
+    export ORACLE_PR_SENTRY_STATE_FILE="$scenario_root/state/state.json"
+    export ORACLE_PR_SENTRY_RUNTIME_DIR="$scenario_root/runtime"
+    export ORACLE_PR_SENTRY_CACHE_DIR="$scenario_root/cache"
+    mkdir -p -- "$(dirname "$ORACLE_PR_SENTRY_STATE_FILE")"
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-head-changed.json"
-  invoke_sentry
+    export GH_FIXTURE="$READY_FIXTURE"
+    invoke_sentry
+    [ "$status" -eq 0 ]
 
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 2 ]
-  [[ "$output" == *"head-sha-changed"* ]]
+    changed_fixture="$scenario_root/changed.json"
+    jq "$patch" "$READY_FIXTURE" > "$changed_fixture"
+    export GH_FIXTURE="$changed_fixture"
+    invoke_sentry
+
+    [ "$status" -eq 0 ] || {
+      printf 'metadata transition failed: %s\n%s\n' "$name" "$output" >&2
+      return 1
+    }
+    [ "$(review_count)" -eq 2 ]
+    [[ "$output" == *"$expected_reason"* ]]
+  done << 'EOF'
+head	.headRefOid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"	head-sha-changed
+base	.baseRefName = "release"	review-input-changed
+title	.title = "Clarify the feature requirements"	review-input-changed
+body	.body = "Implements revised requirements."	review-input-changed
+EOF
 }
 
 @test "a changed PR diff with the same head schedules a new review" {
@@ -61,84 +127,21 @@ setup() {
   [[ "$output" == *"review-input-changed"* ]]
 }
 
-@test "retargeting a PR with the same head and diff schedules a new review" {
-  retargeted_fixture="$BATS_TEST_TMPDIR/pr-retargeted.json"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  jq '.baseRefName = "release"' "$GH_FIXTURE" > "$retargeted_fixture"
-  export GH_FIXTURE="$retargeted_fixture"
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 2 ]
-  [ "$(oracle_count)" -eq 2 ]
-  [[ "$output" == *"review-input-changed"* ]]
-}
-
-@test "editing the PR title with the same head and diff schedules a new review" {
-  updated_fixture="$BATS_TEST_TMPDIR/pr-title-updated.json"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  jq '.title = "Clarify the feature requirements"' \
-    "$GH_FIXTURE" > "$updated_fixture"
-  export GH_FIXTURE="$updated_fixture"
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 2 ]
-  [ "$(oracle_count)" -eq 2 ]
-  [[ "$output" == *"review-input-changed"* ]]
-}
-
-@test "editing the PR body with the same head and diff schedules a new review" {
-  updated_fixture="$BATS_TEST_TMPDIR/pr-body-updated.json"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  jq '.body = "Implements the feature with revised requirements."' \
-    "$GH_FIXTURE" > "$updated_fixture"
-  export GH_FIXTURE="$updated_fixture"
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 2 ]
-  [ "$(oracle_count)" -eq 2 ]
-  [[ "$output" == *"review-input-changed"* ]]
-}
-
-@test "a head transition back to an older reviewed SHA schedules a new review" {
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-head-changed.json"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 3 ]
-  [ "$(oracle_count)" -eq 3 ]
-  [[ "$output" == *"head-sha-changed"* ]]
-}
-
 @test "a draft-to-ready transition is observed and reviewed" {
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=1
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  export GH_FIXTURE="$DRAFT_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 0 ]
-  jq -e '.prs["octo/example#1"].observed.draft == true' \
+  [ "$(baseline_count)" -eq 1 ]
+  jq -e '(keys | sort) == ["candidate_cursor", "version"]' \
     "$ORACLE_PR_SENTRY_STATE_FILE"
 
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -152,14 +155,14 @@ setup() {
 
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=1
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  export GH_FIXTURE="$DRAFT_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
 
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -168,11 +171,11 @@ setup() {
 }
 
 @test "CI moving from pending to failure changes the meaningful fingerprint" {
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-pending.json"
+  export GH_FIXTURE="$CI_PENDING_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -181,16 +184,16 @@ setup() {
 }
 
 @test "the same CI failure recurring after success schedules another review" {
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -199,15 +202,15 @@ setup() {
 }
 
 @test "a repeated CI transition stays unique after marker recovery" {
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 2 ]
@@ -218,11 +221,11 @@ setup() {
   [ "$(review_count)" -eq 2 ]
   [ "$(oracle_count)" -eq 2 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -232,11 +235,11 @@ setup() {
 }
 
 @test "a CI baseline survives state loss before the same failure recurs" {
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
@@ -248,7 +251,7 @@ setup() {
   [ "$(review_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -258,11 +261,11 @@ setup() {
 }
 
 @test "baseline markers use only the comment-only review channel" {
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -273,12 +276,12 @@ setup() {
 }
 
 @test "CI recovery after state loss does not schedule a new review" {
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
   rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -306,38 +309,6 @@ setup() {
   [ "$(review_count)" -eq 1 ]
   [ "$(oracle_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
-  [[ "$output" == *"no meaningful update"* ]]
-}
-
-@test "a newly published CI baseline immediately preserves comparison state" {
-  three_failures="$BATS_TEST_TMPDIR/three-failures.json"
-  two_failures="$BATS_TEST_TMPDIR/two-failures.json"
-  one_failure="$BATS_TEST_TMPDIR/one-failure.json"
-  make_ci_failure_fixture "$three_failures" lint test typecheck
-  make_ci_failure_fixture "$two_failures" lint test
-  make_ci_failure_fixture "$one_failure" test
-
-  export GH_FIXTURE="$three_failures"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
-  export GH_FIXTURE="$two_failures"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 1 ]
-  [ "$(baseline_count)" -eq 1 ]
-  jq -e '
-    .prs["octo/example#1"].comparison.source == "baseline"
-    and (.prs["octo/example#1"] | has("reviewed") | not)
-  ' "$ORACLE_PR_SENTRY_STATE_FILE"
-
-  export GH_FIXTURE="$one_failure"
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 1 ]
-  [ "$(oracle_count)" -eq 1 ]
   [[ "$output" == *"no meaningful update"* ]]
 }
 
@@ -371,42 +342,6 @@ setup() {
   [[ "$output" == *"no meaningful update"* ]]
 }
 
-@test "a recovered CI baseline preserves partial-recovery comparison state" {
-  three_failures="$BATS_TEST_TMPDIR/three-failures.json"
-  two_failures="$BATS_TEST_TMPDIR/two-failures.json"
-  one_failure="$BATS_TEST_TMPDIR/one-failure.json"
-  make_ci_failure_fixture "$three_failures" lint test typecheck
-  make_ci_failure_fixture "$two_failures" lint test
-  make_ci_failure_fixture "$one_failure" test
-
-  export GH_FIXTURE="$three_failures"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  export GH_FIXTURE="$two_failures"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 1 ]
-  [ "$(baseline_count)" -eq 1 ]
-
-  rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 1 ]
-  jq -e '
-    .prs["octo/example#1"].comparison.source == "baseline"
-    and (.prs["octo/example#1"] | has("reviewed") | not)
-  ' "$ORACLE_PR_SENTRY_STATE_FILE"
-
-  export GH_FIXTURE="$one_failure"
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 1 ]
-  [ "$(oracle_count)" -eq 1 ]
-  [[ "$output" == *"no meaningful update"* ]]
-}
-
 @test "a recovered CI baseline preserves success comparison state" {
   two_failures="$BATS_TEST_TMPDIR/two-failures.json"
   one_failure="$BATS_TEST_TMPDIR/one-failure.json"
@@ -428,7 +363,7 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -443,7 +378,7 @@ setup() {
 
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=1
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  export GH_FIXTURE="$DRAFT_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
@@ -457,7 +392,7 @@ setup() {
 
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -473,7 +408,7 @@ setup() {
   rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=1
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  export GH_FIXTURE="$DRAFT_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
@@ -482,7 +417,7 @@ setup() {
   rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -eq 0 ]
@@ -512,7 +447,7 @@ setup() {
         detailsUrl: "https://github.com/octo/example/actions/runs/test"
       }
     ]
-  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" > "$two_failures"
+  ' "$READY_FIXTURE" > "$two_failures"
   jq '
     .statusCheckRollup = [.statusCheckRollup[] | select(.name == "test")]
   ' "$two_failures" > "$one_failure"
@@ -563,7 +498,7 @@ setup() {
         detailsUrl: "https://github.com/octo/example/actions/runs/first"
       }
     ]
-  ' "$TEST_ROOT/tests/fixtures/pr-ready.json" > "$one_producer"
+  ' "$READY_FIXTURE" > "$one_producer"
   jq '
     .statusCheckRollup += [
       {
@@ -594,7 +529,7 @@ setup() {
 
 @test "a rerun URL does not change the logical CI failure identity" {
   rerun_fixture="$BATS_TEST_TMPDIR/rerun.json"
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
@@ -613,7 +548,7 @@ setup() {
 
 @test "a rerun's new check suite id does not change the logical CI failure identity" {
   suite_fixture="$BATS_TEST_TMPDIR/suite-rerun.json"
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ci-failure.json"
+  export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
@@ -629,15 +564,46 @@ setup() {
   [[ "$output" == *"no meaningful update"* ]]
 }
 
-@test "new external discussion activity schedules a new review" {
+@test "external review issue-comment and inline-comment activity trigger reviews" {
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  export GH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-external-activity.json"
+  export GH_FIXTURE="$EXTERNAL_ACTIVITY_FIXTURE"
   invoke_sentry
-
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 2 ]
+  [[ "$output" == *"external-activity"* ]]
+
+  external_review_fixture="$BATS_TEST_TMPDIR/external-review.json"
+  jq '
+    .reviews = [{
+      id: "PRR_external",
+      author: {login: "reviewer"},
+      submittedAt: "2026-07-29T12:00:00Z",
+      state: "COMMENTED",
+      body: "Please revisit this path.",
+      commit: {oid: .headRefOid}
+    }]
+  ' "$GH_FIXTURE" > "$external_review_fixture"
+  export GH_FIXTURE="$external_review_fixture"
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 3 ]
+  [[ "$output" == *"external-activity"* ]]
+
+  export GH_INLINE_COMMENTS_JSON='[{
+    "id": 42,
+    "user": {"login": "reviewer"},
+    "created_at": "2026-07-29T13:00:00Z",
+    "updated_at": "2026-07-29T13:00:00Z",
+    "path": "src/example.sh",
+    "line": 3,
+    "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "body": "Inline concern"
+  }]'
+  invoke_sentry
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 4 ]
   [[ "$output" == *"external-activity"* ]]
 }
 
@@ -723,7 +689,7 @@ setup() {
   [ "$(oracle_count)" -eq 1 ]
 }
 
-@test "the sentry marker is ignored as external activity and recovers lost state" {
+@test "the sentry marker is authoritative after local state deletion" {
   invoke_sentry
   [ "$status" -eq 0 ]
   rm -f -- "$ORACLE_PR_SENTRY_STATE_FILE"
@@ -733,9 +699,92 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
   [ "$(oracle_count)" -eq 1 ]
-  jq -e '
-    .prs["octo/example#1"].reviewed.publication_status == "recovered"
-  ' "$ORACLE_PR_SENTRY_STATE_FILE"
+  jq -e '(keys | sort) == ["candidate_cursor", "version"]' \
+    "$ORACLE_PR_SENTRY_STATE_FILE"
+}
+
+@test "spoofed malformed non-canonical and foreign markers are untrusted" {
+  invoke_sentry
+  [ "$status" -eq 0 ]
+
+  valid_marker=$(grep -o \
+    '<!-- oracle-pr-sentry:v6 payload=[A-Za-z0-9+/]*=* -->' \
+    "$GH_SHIM_STATE_DIR/posted-1.md")
+  valid_payload=${valid_marker#*payload=}
+  valid_payload=${valid_payload% -->}
+  decoded_payload=$(jq -rn --arg payload "$valid_payload" \
+    '$payload | @base64d | fromjson')
+  foreign_payload=$(jq -cS '.identity = "foreign-sentry"' \
+    <<< "$decoded_payload")
+  foreign_payload=$(jq -rn --arg payload "$foreign_payload" \
+    '$payload | @base64')
+  noncanonical_payload=$(jq -c 'to_entries | reverse | from_entries' \
+    <<< "$decoded_payload")
+  noncanonical_payload=$(jq -rn --arg payload "$noncanonical_payload" \
+    '$payload | @base64')
+  duplicate_key_json=${decoded_payload/\{/\{\"identity\":\"oracle-pr-sentry\",}
+  duplicate_key_payload=$(jq -rn --arg payload "$duplicate_key_json" \
+    '$payload | @base64')
+  invalid_fixture="$BATS_TEST_TMPDIR/invalid-markers.json"
+  jq \
+    --arg spoofed "$valid_marker" \
+    --arg malformed '<!-- oracle-pr-sentry:v6 payload=bm90LWpzb24= -->' \
+    --arg foreign "<!-- oracle-pr-sentry:v6 payload=$foreign_payload -->" \
+    --arg noncanonical "<!-- oracle-pr-sentry:v6 payload=$noncanonical_payload -->" \
+    --arg duplicate_key "<!-- oracle-pr-sentry:v6 payload=$duplicate_key_payload -->" '
+      .reviews = [
+        {
+          id: "spoofed",
+          author: {login: "reviewer"},
+          submittedAt: "2026-07-29T13:00:00Z",
+          state: "COMMENTED",
+          body: $spoofed,
+          commit: {oid: .headRefOid}
+        },
+        {
+          id: "malformed",
+          author: {login: "sentry-bot"},
+          submittedAt: "2026-07-29T13:01:00Z",
+          state: "COMMENTED",
+          body: $malformed,
+          commit: {oid: .headRefOid}
+        },
+        {
+          id: "foreign",
+          author: {login: "sentry-bot"},
+          submittedAt: "2026-07-29T13:02:00Z",
+          state: "COMMENTED",
+          body: $foreign,
+          commit: {oid: .headRefOid}
+        },
+        {
+          id: "noncanonical",
+          author: {login: "sentry-bot"},
+          submittedAt: "2026-07-29T13:03:00Z",
+          state: "COMMENTED",
+          body: $noncanonical,
+          commit: {oid: .headRefOid}
+        },
+        {
+          id: "duplicate-key",
+          author: {login: "sentry-bot"},
+          submittedAt: "2026-07-29T13:04:00Z",
+          state: "COMMENTED",
+          body: $duplicate_key,
+          commit: {oid: .headRefOid}
+        }
+      ]
+    ' "$GH_FIXTURE" > "$invalid_fixture"
+
+  export GH_INCLUDE_POSTED_MARKER=0
+  export GH_FIXTURE="$invalid_fixture"
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 2 ]
+  [ "$(oracle_count)" -eq 2 ]
+  jq -e '(.reviews | length) == 5' \
+    "$GH_SHIM_STATE_DIR/oracle-metadata.json"
 }
 
 @test "an Oracle non-zero exit leaves the review retryable" {
@@ -744,8 +793,6 @@ setup() {
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 0 ]
-  jq -e '.prs["octo/example#1"].reviewed == null' \
-    "$ORACLE_PR_SENTRY_STATE_FILE"
 
   unset ORACLE_EXIT_STATUS
   invoke_sentry
@@ -761,6 +808,22 @@ setup() {
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 0 ]
   [[ "$output" == *"status 124"* ]]
+}
+
+@test "a GitHub publication failure leaves the review retryable" {
+  export GH_REVIEW_FAIL=1
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [ "$(oracle_count)" -eq 1 ]
+
+  unset GH_REVIEW_FAIL
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 2 ]
 }
 
 @test "Oracle stays attached to the bounded foreground invocation" {
@@ -811,179 +874,28 @@ setup() {
   grep -qx 'ORACLE_BROWSER_PROFILE_DIR=' "$GH_SHIM_STATE_DIR/oracle-env.log"
 }
 
-@test "Oracle wait controls and file-input aliases cannot be overridden" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  for controlled_argument in \
-    --background=true --no-background \
-    --wait --wait=true --no-wait --no-wait=true \
-    --dry-run --dry-run=true --preview --preview=true \
-    --render --render=true --render-markdown --render-markdown=true \
-    --copy-markdown --copy-markdown=true \
-    --include --include=/tmp/secret \
-    --files --files=/tmp/secret \
-    --path --path=/tmp/secret \
-    --paths --paths=/tmp/secret; do
-    printf '%s\n' "$controlled_argument" > "$args_file"
-    chmod 600 "$args_file"
-
-    invoke_sentry --dry-run
-
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"cannot be overridden: $controlled_argument"* ]]
-  done
-}
-
-@test "the end-of-options delimiter cannot neutralize sentry-owned arguments" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  printf -- '--\n' > "$args_file"
-  chmod 600 "$args_file"
-
-  invoke_sentry --dry-run
-
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"cannot be overridden: --"* ]]
-}
-
-@test "Oracle context and routing controls cannot be overridden" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  for controlled_argument in \
-    --model --model=gpt-5.5 -m -mgpt-5.5 \
-    --browser-thinking-time --browser-thinking-time=light \
-    --chatgpt-url --chatgpt-url=https://chatgpt.com/g/project \
-    --browser-url --browser-url=https://chatgpt.com/g/project \
-    --browser-model-strategy --browser-model-strategy=current \
-    --browser-tab --browser-tab=current \
-    --browser-attach-running --browser-attach-running=true \
-    --browser-keep-browser --browser-keep-browser=true \
-    --browser-manual-login-profile-dir \
-    --browser-manual-login-profile-dir=/tmp/attacker-profile \
-    --remote-host --remote-host=reviewer.example:9473 \
-    --remote-token --remote-token=example \
-    --remote-chrome --remote-chrome=reviewer.example:9222 \
-    --base-url --base-url=https://reviewer.example/v1 \
-    --provider --provider=azure; do
-    printf '%s\n' "$controlled_argument" > "$args_file"
-    chmod 600 "$args_file"
-
-    invoke_sentry --dry-run
-
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"cannot be overridden: $controlled_argument"* ]]
-  done
-}
-
-@test "Oracle session execution controls cannot be overridden" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  for controlled_argument in \
-    --status --status=current \
-    --session --session=existing \
-    --exec-session --exec-session=existing; do
-    printf '%s\n' "$controlled_argument" > "$args_file"
-    chmod 600 "$args_file"
-
-    invoke_sentry --dry-run
-
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"cannot be overridden: $controlled_argument"* ]]
-  done
-}
-
-@test "Oracle top-level subcommands and other positional tokens cannot be smuggled in" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  for controlled_argument in \
-    session restart serve project-sources bridge tui abc123; do
-    printf '%s\n' "$controlled_argument" > "$args_file"
-    chmod 600 "$args_file"
-
-    invoke_sentry --dry-run
-
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"accepts option values only, not positional tokens: $controlled_argument"* ]]
-  done
-}
-
-@test "a bare token after a self-contained flag=value line is rejected" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  printf '%s\n' "--browser-auto-reattach-delay=30s" "2m" > "$args_file"
-  chmod 600 -- "$args_file"
-
-  invoke_sentry --dry-run
-
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"accepts option values only, not positional tokens: 2m"* ]]
-}
-
-@test "a second bare token chained after a consumed flag value is rejected" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  printf '%s\n' "--browser-auto-reattach-delay" "30s" "restart" > "$args_file"
-  chmod 600 -- "$args_file"
-
-  invoke_sentry --dry-run
-
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"accepts option values only, not positional tokens: restart"* ]]
-}
-
-@test "an arguments file ending mid-option is rejected" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  printf '%s\n' "--browser-auto-reattach-delay" > "$args_file"
-  chmod 600 -- "$args_file"
-
-  invoke_sentry --dry-run
-
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"ends with an option awaiting its value: --browser-auto-reattach-delay"* ]]
-}
-
-@test "a flag and its value on separate lines still reach Oracle" {
-  args_directory="$TEST_HOME/.config/oracle-pr-sentry"
-  args_file="$args_directory/oracle-args"
-  install -d -m 700 -- "$args_directory"
-  export ORACLE_PR_SENTRY_ORACLE_ARGS_FILE="$args_file"
-
-  printf '%s\n' \
-    "--browser-auto-reattach-delay" "30s" \
-    "--browser-auto-reattach-interval" "2m" \
-    > "$args_file"
-  chmod 600 -- "$args_file"
+@test "explicit reattach durations reach Oracle" {
+  export ORACLE_PR_SENTRY_REATTACH_DELAY=30s
+  export ORACLE_PR_SENTRY_REATTACH_INTERVAL=2m
+  export ORACLE_PR_SENTRY_REATTACH_TIMEOUT=3m
 
   invoke_sentry
 
   [ "$status" -eq 0 ]
-  grep -q -- '--browser-auto-reattach-delay 30s --browser-auto-reattach-interval 2m' \
+  grep -q -- \
+    '--browser-auto-reattach-delay 30s --browser-auto-reattach-interval 2m --browser-auto-reattach-timeout 3m' \
     "$GH_SHIM_STATE_DIR/oracle.log"
+}
+
+@test "invalid reattach durations fail before Oracle" {
+  for invalid_duration in 0s 1.5s 30 seconds --model=attacker /tmp/value; do
+    export ORACLE_PR_SENTRY_REATTACH_DELAY="$invalid_duration"
+    invoke_sentry
+
+    [ "$status" -ne 0 ]
+    [ "$(oracle_count)" -eq 0 ]
+    [[ "$output" == *"must be empty or a positive duration"* ]]
+  done
 }
 
 @test "empty Oracle output is never posted" {
@@ -993,6 +905,17 @@ setup() {
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 0 ]
   [[ "$output" == *"empty or invalid Markdown"* ]]
+}
+
+@test "oversized Oracle output is never posted" {
+  export ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES=100
+  export ORACLE_REVIEW_TEXT
+  ORACLE_REVIEW_TEXT=$(printf 'review text %.0s' {1..20})
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"review limit is 100"* ]]
 }
 
 @test "model-generated publication marker text is rejected" {
@@ -1059,12 +982,13 @@ setup() {
   ' "$GH_SHIM_STATE_DIR/oracle-metadata.json"
 }
 
-@test "a post followed by an atomic state failure recovers from its marker" {
+@test "GitHub acceptance remains authoritative after cursor write failure" {
   export FAIL_STATE_MV=1
   invoke_sentry
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 1 ]
+  [ "$(oracle_count)" -eq 1 ]
   [ ! -e "$ORACLE_PR_SENTRY_STATE_FILE" ]
 
   unset FAIL_STATE_MV
@@ -1073,37 +997,6 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
   [ "$(oracle_count)" -eq 1 ]
-  jq -e '
-    .prs["octo/example#1"].reviewed.publication_status == "recovered"
-  ' "$ORACLE_PR_SENTRY_STATE_FILE"
-}
-
-@test "a state-write failure after an input change recovers without a duplicate review" {
-  changed_diff="$BATS_TEST_TMPDIR/changed-pr.diff"
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  {
-    printf '%s\n' "$(< "$GH_DIFF_FIXTURE")"
-    printf '%s\n' '+base branch changed the effective diff'
-  } > "$changed_diff"
-  export GH_DIFF_FIXTURE="$changed_diff"
-
-  export FAIL_STATE_MV=1
-  invoke_sentry
-
-  [ "$status" -ne 0 ]
-  [ "$(review_count)" -eq 2 ]
-
-  unset FAIL_STATE_MV
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 2 ]
-  [ "$(oracle_count)" -eq 2 ]
-  jq -e '
-    .prs["octo/example#1"].reviewed.publication_status == "recovered"
-  ' "$ORACLE_PR_SENTRY_STATE_FILE"
 }
 
 @test "a concurrent invocation exits cleanly before discovery" {
@@ -1129,7 +1022,7 @@ setup() {
 @test "discovery applies owner author open archived and draft filters" {
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=2
-  export GH_FIXTURE_2="$TEST_ROOT/tests/fixtures/pr-draft.json"
+  export GH_FIXTURE_2="$DRAFT_FIXTURE"
   invoke_sentry --dry-run
 
   [ "$status" -eq 0 ]
@@ -1176,8 +1069,8 @@ setup() {
   export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=
-  export GH_FIXTURE_1="$TEST_ROOT/tests/fixtures/pr-ready.json"
-  export GH_FIXTURE_2="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE_1="$READY_FIXTURE"
+  export GH_FIXTURE_2="$READY_FIXTURE"
   export ORACLE_SLEEP=5
   export ORACLE_SLEEP_PR_NUMBER=2
 
@@ -1194,7 +1087,7 @@ setup() {
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 1 ]
-  jq -e '.prs["octo/example#1"].reviewed.fingerprint != null' \
+  jq -e '.candidate_cursor == "octo/example#2"' \
     "$ORACLE_PR_SENTRY_STATE_FILE"
 }
 
@@ -1224,12 +1117,12 @@ setup() {
 @test "a transient error for one PR does not stop remaining candidates" {
   export GH_READY_NUMBERS=1,2
   export GH_FAIL_PR=1
-  export GH_FIXTURE_2="$TEST_ROOT/tests/fixtures/pr-ready.json"
+  export GH_FIXTURE_2="$READY_FIXTURE"
   invoke_sentry
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 1 ]
-  jq -e '.prs["octo/example#2"].reviewed.fingerprint != null' \
+  jq -e '(keys | sort) == ["candidate_cursor", "version"]' \
     "$ORACLE_PR_SENTRY_STATE_FILE"
   [[ "$output" == *"candidate failed; continuing"* ]]
 }
