@@ -9,6 +9,16 @@ mkdir -p -- "$GH_SHIM_STATE_DIR"
 printf '%q ' "$@" >> "$GH_SHIM_STATE_DIR/gh.log"
 printf '\n' >> "$GH_SHIM_STATE_DIR/gh.log"
 
+increment_counter() {
+  local counter_file=$1
+  local count=0
+
+  [[ -f "$counter_file" ]] && count=$(< "$counter_file")
+  ((count += 1))
+  printf '%s\n' "$count" > "$counter_file"
+  printf '%s\n' "$count"
+}
+
 emit_candidates() {
   local numbers=$1
   local draft=$2
@@ -37,30 +47,24 @@ emit_candidates() {
       '
 }
 
-append_posted_review() {
+append_publications() {
   local fixture=$1
   local number=$2
-  local baseline_file posted_file
+  local event_file
   local posted_bodies='[]'
-  local baseline_bodies='[]'
 
   if [[ "${GH_INCLUDE_POSTED_MARKER:-1}" == 1 ]]; then
-    for posted_file in "$GH_SHIM_STATE_DIR"/posted-"$number"-*.md; do
-      [[ -s "$posted_file" ]] || continue
-      posted_bodies=$(jq -c --rawfile body "$posted_file" '. + [$body]' \
+    for event_file in "$GH_SHIM_STATE_DIR"/event-"$number"-*.md; do
+      [[ -s "$event_file" ]] || continue
+      posted_bodies=$(jq -c --rawfile body "$event_file" '. + [$body]' \
         <<< "$posted_bodies")
-    done
-    for baseline_file in "$GH_SHIM_STATE_DIR"/baseline-"$number"-*.md; do
-      [[ -s "$baseline_file" ]] || continue
-      baseline_bodies=$(jq -c --rawfile body "$baseline_file" '. + [$body]' \
-        <<< "$baseline_bodies")
     done
   fi
 
   jq \
-    --argjson bodies "$posted_bodies" \
-    --argjson baseline_bodies "$baseline_bodies" '
-      .reviews += [
+    --argjson bodies "$posted_bodies" '
+      .headRefOid as $head_oid
+      | .reviews += [
         $bodies
         | to_entries[]
         | {
@@ -71,23 +75,9 @@ append_posted_review() {
             ),
             state: "COMMENTED",
             body: .value,
-            commit: {oid: .headRefOid}
+            commit: {oid: $head_oid}
           }
       ]
-      | .reviews += [
-          $baseline_bodies
-          | to_entries[]
-          | {
-              id: ("PRR_baseline_" + (.key | tostring)),
-              author: {login: "sentry-bot"},
-              submittedAt: (
-                "2026-07-29T12:30:0" + (.key | tostring) + "Z"
-              ),
-              state: "COMMENTED",
-              body: .value,
-              commit: {oid: .headRefOid}
-            }
-        ]
     ' "$fixture"
 }
 
@@ -160,16 +150,108 @@ case "${1:-} ${2:-}" in
             }
           }]
         '
+    elif [[ "$*" == *"APPROVED,"* && "$*" == *"PENDING"* ]]; then
+      number=1
+      for argument in "$@"; do
+        if [[ "$argument" == number=* ]]; then
+          number=${argument#number=}
+        fi
+      done
+      fixture_variable="GH_FIXTURE_$number"
+      fixture=${!fixture_variable:-$GH_FIXTURE}
+      reviews=$(append_publications "$fixture" "$number" | jq -c '
+        (.reviews // [])
+        | to_entries
+        | map(
+            .value + {
+              fullDatabaseId: (
+                .value.fullDatabaseId // ((1000 + .key) | tostring)
+              )
+            }
+          )
+      ')
+      jq -cn --argjson reviews "$reviews" '
+        [{
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: {
+                  nodes: $reviews,
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: null
+                  }
+                }
+              }
+            }
+          }
+        }]
+      '
+    elif [[ "$*" == *"comments(first: 100"* ]]; then
+      number=1
+      for argument in "$@"; do
+        if [[ "$argument" == number=* ]]; then
+          number=${argument#number=}
+        fi
+      done
+      fixture_variable="GH_FIXTURE_$number"
+      fixture=${!fixture_variable:-$GH_FIXTURE}
+      issue_comment_count=$(increment_counter \
+        "$GH_SHIM_STATE_DIR/issue-comment-count-$number")
+      if [[ -n "${GH_ISSUE_COMMENT_PAGES_JSON:-}" ]]; then
+        issue_comment_pages=$GH_ISSUE_COMMENT_PAGES_JSON
+      else
+        issue_comment_pages=$(jq -c '[.comments // []]' "$fixture")
+      fi
+      if [[ "${GH_RACE_ACTIVITY:-0}" == 1 &&
+        "$issue_comment_count" -gt 1 ]]; then
+        issue_comment_pages=$(jq -c '
+          .[-1] += [{
+            id: "comment-race",
+            author: {login: "reviewer"},
+            createdAt: "2026-07-29T13:00:00Z",
+            updatedAt: "2026-07-29T13:00:00Z",
+            body: "New review input arrived while Oracle was running."
+          }]
+        ' <<< "$issue_comment_pages")
+      fi
+      jq -cn --argjson pages "$issue_comment_pages" '
+        $pages
+        | map({
+            data: {
+              repository: {
+                pullRequest: {
+                  comments: {
+                    nodes: .,
+                    pageInfo: {
+                      hasNextPage: false,
+                      endCursor: null
+                    }
+                  }
+                }
+              }
+            }
+          })
+      '
     else
       if [[ -z "${GH_REVIEW_THREAD_RESOLVED:-}" ]]; then
         review_threads='[]'
       else
         review_threads=$(jq -cn \
-          --argjson resolved "$GH_REVIEW_THREAD_RESOLVED" '
+          --argjson resolved "$GH_REVIEW_THREAD_RESOLVED" \
+          --arg review_state \
+          "${GH_REVIEW_THREAD_REVIEW_STATE:-COMMENTED}" '
             [{
               id: "PRRT_kwDOexample",
               isResolved: $resolved,
-              isOutdated: false
+              isOutdated: false,
+              comments: {
+                nodes: [{
+                  pullRequestReview: {
+                    state: $review_state
+                  }
+                }]
+              }
             }]
           ')
       fi
@@ -228,18 +310,19 @@ case "${1:-} ${2:-}" in
 
     fixture_variable="GH_FIXTURE_$number"
     fixture=${!fixture_variable:-$GH_FIXTURE}
-    view_count_file="$GH_SHIM_STATE_DIR/view-count-$number"
-    view_count=0
-    [[ -f "$view_count_file" ]] && view_count=$(< "$view_count_file")
-    ((view_count += 1))
-    printf '%s\n' "$view_count" > "$view_count_file"
+    view_count=$(increment_counter "$GH_SHIM_STATE_DIR/view-count-$number")
 
-    append_posted_review "$fixture" "$number" \
+    append_publications "$fixture" "$number" \
       | jq --argjson number "$number" \
         --arg repository "${GH_REPOSITORY:-octo/example}" '
           .number = $number
           | .url = ("https://github.com/" + $repository + "/pull/" + ($number | tostring))
         ' \
+      | if [[ "${GH_TRUNCATE_PR_VIEW_REVIEWS:-0}" == 1 ]]; then
+        jq '.reviews = .reviews[:100]'
+      else
+        jq .
+      fi \
       | if [[ "${GH_RACE_HEAD:-0}" == 1 && "$view_count" -gt 1 ]]; then
         jq '.headRefOid = "cccccccccccccccccccccccccccccccccccccccc"'
       elif [[ "${GH_RACE_REQUIREMENTS:-0}" == 1 && "$view_count" -gt 1 ]]; then
@@ -247,14 +330,6 @@ case "${1:-} ${2:-}" in
           .title = "Updated requirements"
           | .body = "Requirements changed while Oracle was running."
         '
-      elif [[ "${GH_RACE_ACTIVITY:-0}" == 1 && "$view_count" -gt 1 ]]; then
-        jq '.comments += [{
-          id: "comment-race",
-          author: {login: "reviewer"},
-          createdAt: "2026-07-29T13:00:00Z",
-          updatedAt: "2026-07-29T13:00:00Z",
-          body: "New review input arrived while Oracle was running."
-        }]'
       else
         jq .
       fi
@@ -264,11 +339,7 @@ case "${1:-} ${2:-}" in
       printf 'simulated diff failure\n' >&2
       exit 1
     fi
-    diff_count_file="$GH_SHIM_STATE_DIR/diff-count"
-    diff_count=0
-    [[ -f "$diff_count_file" ]] && diff_count=$(< "$diff_count_file")
-    ((diff_count += 1))
-    printf '%s\n' "$diff_count" > "$diff_count_file"
+    diff_count=$(increment_counter "$GH_SHIM_STATE_DIR/diff-count")
 
     printf '%s\n' "$(< "${GH_DIFF_FIXTURE:?GH_DIFF_FIXTURE is required}")"
     if [[ "${GH_RACE_DIFF:-0}" == 1 && "$diff_count" -gt 1 ]]; then
@@ -303,33 +374,36 @@ case "${1:-} ${2:-}" in
       printf 'simulated review failure\n' >&2
       exit 1
     fi
-    if grep -Fq -- ' kind=baseline ' "$body_file"; then
+    marker_payload=$(sed -n \
+      's/.*<!-- oracle-pr-sentry:v6 payload=\([A-Za-z0-9+/]*=*\) -->.*/\1/p' \
+      "$body_file")
+    marker_kind=$(jq -rn --arg payload "$marker_payload" \
+      '$payload | @base64d | fromjson | .kind')
+    if [[ "$marker_kind" == "baseline" ]]; then
       count_file="$GH_SHIM_STATE_DIR/baseline-count"
-      count=0
-      [[ -f "$count_file" ]] && count=$(< "$count_file")
-      ((count += 1))
-      printf '%s\n' "$count" > "$count_file"
+      count=$(increment_counter "$count_file")
       printf -v history_file '%s/baseline-%s-%06d.md' \
         "$GH_SHIM_STATE_DIR" "$number" "$count"
       cp -- "$body_file" "$history_file"
     else
       cp -- "$body_file" "$GH_SHIM_STATE_DIR/posted-$number.md"
       count_file="$GH_SHIM_STATE_DIR/review-count"
-      count=0
-      [[ -f "$count_file" ]] && count=$(< "$count_file")
-      ((count += 1))
-      printf '%s\n' "$count" > "$count_file"
+      count=$(increment_counter "$count_file")
       printf -v history_file '%s/posted-%s-%06d.md' \
         "$GH_SHIM_STATE_DIR" "$number" "$count"
       cp -- "$body_file" "$history_file"
     fi
+    event_count=$(increment_counter "$GH_SHIM_STATE_DIR/event-count-$number")
+    printf -v event_file '%s/event-%s-%06d.md' \
+      "$GH_SHIM_STATE_DIR" "$number" "$event_count"
+    cp -- "$body_file" "$event_file"
     ;;
   "pr comment")
     printf 'issue-comment publication is forbidden\n' >&2
     exit 2
     ;;
   "api --paginate")
-    printf '[[]]\n'
+    printf '[%s]\n' "${GH_INLINE_COMMENTS_JSON:-[]}"
     ;;
   *)
     printf 'unexpected gh invocation: %s\n' "$*" >&2

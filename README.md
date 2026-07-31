@@ -3,15 +3,15 @@
 `oracle-pr-sentry` is a small Linux service that polls GitHub for pull requests
 and asks [Oracle](https://github.com/steipete/oracle) to review meaningful
 updates through a signed-in ChatGPT Web browser session. It posts only
-comment-only GitHub reviews and remembers the exact fingerprints that GitHub
-accepted.
+comment-only GitHub reviews. Trusted, authenticated review markers are the
+authoritative per-PR event history.
 
 The native Linux implementation deliberately stays close to shell glue:
 
 - one Bash entrypoint;
 - `gh` for every GitHub read and write;
 - `jq` and SHA-256 for normalized snapshots and fingerprints;
-- one atomic local JSON state file;
+- one atomic local JSON file containing only the candidate-rotation cursor;
 - `flock` for process-wide exclusion;
 - a `systemd --user` oneshot service and timer;
 - journald for operational logs.
@@ -172,6 +172,7 @@ The installer copies only these project-managed files:
 
 - `~/.local/bin/oracle-pr-sentry`
 - `~/.local/share/oracle-pr-sentry/review-prompt.md`
+- `~/.local/share/oracle-pr-sentry/decision-reducer.jq`
 - `~/.config/systemd/user/oracle-pr-sentry.service`
 - `~/.config/systemd/user/oracle-pr-sentry.timer`
 
@@ -220,40 +221,32 @@ The sourced file takes precedence over exported environment values; the
 | `ORACLE_PR_SENTRY_ORACLE_THINKING_TIME`  | `extended`                                    | Oracle browser thinking level                                                            |
 | `ORACLE_PR_SENTRY_ORACLE_MANUAL_LOGIN`   | `1`                                           | Reuse Oracle's persistent manual-login profile                                           |
 | `ORACLE_PR_SENTRY_ORACLE_HOME_DIR`       | `$XDG_DATA_HOME/oracle-pr-sentry/oracle-home` | Private `ORACLE_HOME_DIR` isolating Oracle's config and browser profile from `~/.oracle` |
-| `ORACLE_PR_SENTRY_ORACLE_ARGS_FILE`      | unset                                         | Optional file containing one literal Oracle argument per line                            |
+| `ORACLE_PR_SENTRY_REATTACH_DELAY`        | unset                                         | Optional Oracle browser auto-reattach delay                                              |
+| `ORACLE_PR_SENTRY_REATTACH_INTERVAL`     | unset                                         | Optional Oracle browser auto-reattach polling interval                                   |
+| `ORACLE_PR_SENTRY_REATTACH_TIMEOUT`      | unset                                         | Optional Oracle browser auto-reattach timeout                                            |
 | `ORACLE_PR_SENTRY_PROMPT_PATH`           | installed prompt                              | Independently editable review instructions                                               |
 | `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME`    | `1800`                                        | Oracle timeout in whole seconds                                                          |
 | `ORACLE_PR_SENTRY_MAX_REVIEW_BODY_BYTES` | `60000`                                       | Maximum generated review plus marker                                                     |
-| `ORACLE_PR_SENTRY_STATE_FILE`            | `$XDG_STATE_HOME/oracle-pr-sentry/state.json` | Persistent review state and candidate-rotation cursor                                    |
-| `ORACLE_PR_SENTRY_RETENTION_DAYS`        | `30`                                          | Age before unseen/closed/ineligible entries are pruned                                   |
+| `ORACLE_PR_SENTRY_STATE_FILE`            | `$XDG_STATE_HOME/oracle-pr-sentry/state.json` | Persistent candidate-rotation cursor only                                                |
 | `ORACLE_PR_SENTRY_CACHE_DIR`             | `$XDG_CACHE_HOME/oracle-pr-sentry`            | Private cache directory                                                                  |
 | `ORACLE_PR_SENTRY_RUNTIME_DIR`           | `$XDG_RUNTIME_DIR/oracle-pr-sentry-$UID`      | Lock and secure temporary workspace                                                      |
 | `ORACLE_PR_SENTRY_LOCK_FILE`             | runtime directory `sentry.lock`               | Global non-blocking lock                                                                 |
 | `ORACLE_PR_SENTRY_IDENTITY`              | `oracle-pr-sentry`                            | Identity encoded in hidden review markers                                                |
 | `ORACLE_PR_SENTRY_DRY_RUN`               | `0`                                           | Environment equivalent of `--dry-run`                                                    |
 
-The arguments file is not shell-parsed. Put each flag and value on separate
-lines:
+The optional reattach settings accept only positive integer durations with an
+`ms`, `s`, `m`, or `h` suffix:
 
-```text
---browser-auto-reattach-delay
-30s
---browser-auto-reattach-interval
-2m
+```bash
+ORACLE_PR_SENTRY_REATTACH_DELAY=30s
+ORACLE_PR_SENTRY_REATTACH_INTERVAL=2m
+ORACLE_PR_SENTRY_REATTACH_TIMEOUT=2m
 ```
 
-The sentry rejects extra arguments that could replace its engine, model,
-model-selection strategy, prompt, attachments (including Oracle's file-input
-aliases), output path, ChatGPT workspace/tab, local browser route, provider
-route, background/wait behavior, or dry-run/preview/render controls. The
-browser engine, configured model, fresh local tab, single-tab concurrency,
-attached bounded foreground execution, and write-output path remain fixed by
-the executable.
-
-Every line must be an option or the value of the option immediately before
-it: a bare token that is not consuming a preceding option's value (including
-an Oracle subcommand such as `session` or `restart`) is rejected, as is a
-file that ends with an option still awaiting its value.
+No generic Oracle argument passthrough is supported. The browser engine,
+configured model, prompt, attachments, output path, fresh local tab,
+single-tab concurrency, attached bounded foreground execution, route, and
+timeout policy remain fixed by the executable.
 
 If `ORACLE_PR_SENTRY_MAX_REVIEW_RUNTIME` is raised above 30 minutes, also raise
 the service's `RuntimeMaxSec` and `TimeoutStartSec`, then reinstall the unit.
@@ -301,16 +294,25 @@ oracle-pr-sentry enable
 oracle-pr-sentry uninstall
 ```
 
-`uninstall` removes only the four installed project files listed above. It
+`uninstall` removes only the five installed project files listed above. It
 preserves configuration, state, cache, Oracle sessions, and browser profiles.
 
 The executable uses a non-blocking global `flock`. If a timer activation
 overlaps an existing pass, the new process logs that another invocation holds
 the lock and exits successfully without opening another browser session.
-Before each candidate attempt, the sentry checkpoints a cursor in its state
-file. If a slow Oracle run consumes the remaining service budget, the next
-activation starts after that candidate, while completed passes naturally
-return to most-recently-updated order.
+Before each candidate attempt, the sentry checkpoints the only local persistent
+value: a rotation cursor. If a slow Oracle run consumes the remaining service
+budget, the next activation starts after that candidate, while completed
+passes naturally return to most-recently-updated order.
+
+### Upgrading from v5 markers
+
+Version 6 deliberately has no v5 marker or local per-PR state compatibility
+parser. Stop the timer and remove the old state file (or replace it with
+`{"version":1}`) before the first v6 pass. Each open PR then receives a
+one-time review or baseline event that establishes the v6 marker history.
+After that rebaseline, deleting the local state file does not lose per-PR
+transition history.
 
 ### Unattended user services
 
@@ -350,13 +352,14 @@ Common cases:
   the sentry timeout plus systemd `RuntimeMaxSec` and `TimeoutStartSec` only
   when longer runs are expected.
 - **Malformed state:** the sentry fails closed and names the file. Preserve it
-  for diagnosis, then replace it with `{"version":1,"prs":{}}` or remove it to
-  start fresh. Existing GitHub markers still prevent duplicate publication.
+  for diagnosis, then replace it with `{"version":1}` or remove it to start
+  with an empty rotation cursor. Existing v6 GitHub markers preserve per-PR
+  transition history.
 - **Head changed during review:** the generated result is discarded without
   posting. The new head is reviewed on the next pass.
-- **Review posted but state write failed:** the exact hidden marker is detected
-  on the next pass and reconciled into local state without invoking Oracle or
-  posting again.
+- **Review posted but the process exits:** GitHub acceptance is the commit
+  point. The exact hidden marker prevents another Oracle invocation or
+  duplicate publication on the next pass.
 
 ## Security model
 
@@ -388,11 +391,11 @@ browser, authenticate to ChatGPT, or write to GitHub:
 ```
 
 This formats Markdown and shell scripts, runs ShellCheck, and runs Bats
-scenarios covering new and unchanged PRs, head and CI changes, draft
-readiness, external activity, marker filtering and recovery, canonical
-reordering, Oracle errors/timeouts/empty output, stale heads, atomic-state
-failure, concurrency, malformed state, discovery filters, and per-PR error
-isolation. It also lints and fixes the GitHub Actions workflows with zizmor,
-actionlint, yamllint, and checkov. CI requires no repository secrets.
+scenarios covering the table-driven decision matrix, readiness, external
+activity, marker filtering and recovery, canonical reordering, Oracle
+errors/timeouts/empty output, stale inputs, cursor persistence, concurrency,
+malformed state, discovery filters, and per-PR error isolation. It also lints
+and fixes the GitHub Actions workflows with zizmor, actionlint, yamllint, and
+checkov. CI requires no repository secrets.
 
 The GitHub Actions workflow has read-only repository contents permission.
