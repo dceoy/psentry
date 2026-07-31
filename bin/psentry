@@ -191,7 +191,10 @@ source_configuration() {
 
   PSENTRY_GITHUB_OWNER="${PSENTRY_GITHUB_OWNER:-}"
   PSENTRY_GITHUB_AUTHOR="${PSENTRY_GITHUB_AUTHOR:-}"
-  PSENTRY_PR_SEARCH_LIMIT="${PSENTRY_PR_SEARCH_LIMIT:-50}"
+  # GitHub's search API never returns more than 1000 results for a single
+  # query; defaulting to that ceiling (rather than a low, arbitrary value)
+  # ensures a stateless pass never permanently excludes older ready PRs.
+  PSENTRY_PR_SEARCH_LIMIT="${PSENTRY_PR_SEARCH_LIMIT:-1000}"
   PSENTRY_ORACLE_BIN="${PSENTRY_ORACLE_BIN:-oracle}"
   PSENTRY_ORACLE_MODEL="${PSENTRY_ORACLE_MODEL:-gpt-5.5-pro}"
   PSENTRY_ORACLE_THINKING_TIME="${PSENTRY_ORACLE_THINKING_TIME:-extended}"

@@ -132,6 +132,23 @@ wait_entrypoint() {
   wait_for_log '^sleep-signal:TERM$'
 }
 
+@test "a pending shutdown signal exits immediately when no workload is active" {
+  # The real race (signal arriving between one run_active call returning and
+  # the next starting) is a handful of bash builtins wide and cannot be hit
+  # reliably by racing an external kill against a live process, so this
+  # sources the script directly and drives forward_signal with active_pid
+  # empty, which is exactly that gap.
+  run bash -c '
+    source "'"$TEST_ROOT"'/container/entrypoint.sh"
+    WEBSOCKIFY_PID=$$
+    active_pid=""
+    shutdown_signal=""
+    forward_signal TERM
+  '
+
+  [ "$status" -eq 143 ]
+}
+
 @test "the entrypoint stops when the noVNC proxy exits" {
   export ENTRYPOINT_WEBSOCKIFY_EXIT=1
   start_entrypoint

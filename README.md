@@ -214,7 +214,7 @@ The sourced file takes precedence over exported environment values; the
 | ------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `PSENTRY_GITHUB_OWNER`          | authenticated `gh` login             | Repository owner or organization filter                                                  |
 | `PSENTRY_GITHUB_AUTHOR`         | authenticated `gh` login             | Pull request author filter                                                               |
-| `PSENTRY_PR_SEARCH_LIMIT`       | `50`                                 | Maximum most-recently-updated ready and draft observations per search                    |
+| `PSENTRY_PR_SEARCH_LIMIT`       | `1000`                               | Maximum ready and draft observations per search (GitHub's own search API ceiling)         |
 | `PSENTRY_ORACLE_BIN`            | `oracle`                             | Oracle executable name or absolute path                                                  |
 | `PSENTRY_ORACLE_MODEL`          | `gpt-5.5-pro`                        | ChatGPT model requested from Oracle                                                      |
 | `PSENTRY_ORACLE_THINKING_TIME`  | `extended`                           | Oracle browser thinking level                                                            |

@@ -1121,6 +1121,18 @@ EOF
   grep -q -- '--order desc' "$GH_SHIM_STATE_DIR/gh.log"
 }
 
+@test "the default search limit does not permanently exclude older ready PRs" {
+  export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-sixty.json"
+  export GH_DRAFT_NUMBERS=
+
+  invoke_sentry --dry-run
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"eligible octo/example#60"* ]]
+  [[ "$output" == *"eligible octo/example#1"* ]]
+  grep -q -- '--limit 1000' "$GH_SHIM_STATE_DIR/gh.log"
+}
+
 @test "candidate processing order follows recency, not a fixed repository/number order" {
   export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
   export GH_READY_NUMBERS=
