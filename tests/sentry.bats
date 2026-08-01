@@ -1113,6 +1113,19 @@ EOF
   [[ "$output" == *"malformed or unsupported state file"* ]]
 }
 
+@test "multiple rotation state documents fail safely" {
+  mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
+  printf '%s\n' \
+    '{"version":1,"candidate_cursor":"octo/example#1"}' \
+    '{"version":1,"candidate_cursor":"octo/example#1"}' \
+    > "$PSENTRY_STATE_FILE"
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"malformed or unsupported state file"* ]]
+}
+
 @test "discovery applies owner author open archived and draft filters" {
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=2

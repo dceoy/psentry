@@ -360,23 +360,24 @@ load_state() {
     chmod 600 -- "$PSENTRY_STATE_FILE"
   fi
 
-  if ! jq -e '
-    type == "object"
-    and .version == 1
-    and (keys - ["candidate_cursor", "version"] | length == 0)
-    and (
-      (has("candidate_cursor") | not)
-      or (
-        .candidate_cursor
-        | type == "string"
-          and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
+  if ! STATE_JSON=$(jq -cSe '
+    select(length == 1)
+    | .[0]
+    | select(
+        type == "object"
+        and .version == 1
+        and (keys - ["candidate_cursor", "version"] | length == 0)
+        and (
+          (has("candidate_cursor") | not)
+          or (
+            .candidate_cursor
+            | type == "string"
+              and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
+          )
+        )
       )
-    )
-  ' "$PSENTRY_STATE_FILE" > /dev/null; then
+  ' --slurp "$PSENTRY_STATE_FILE"); then
     die "malformed or unsupported state file: $PSENTRY_STATE_FILE"
-  fi
-  if ! STATE_JSON=$(jq -cS . "$PSENTRY_STATE_FILE"); then
-    die "failed to load state file: $PSENTRY_STATE_FILE"
   fi
 }
 
