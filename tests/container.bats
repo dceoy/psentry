@@ -341,3 +341,20 @@ wait_entrypoint() {
   [ "$status" -eq 1 ]
   grep -q "PSENTRY_POLL_INTERVAL=\${POLL_INTERVAL}" "$TEST_ROOT/container.sh"
 }
+
+@test "container stop grants more time than the entrypoint's SIGKILL backstop" {
+  local stop_timeout backstop_timeout
+
+  # shellcheck disable=SC2016 # literal grep pattern, not a shell expansion
+  grep -q -F -- '--time "${CONTAINER_STOP_TIMEOUT_SECONDS}"' "$TEST_ROOT/container.sh"
+  [[ "$(grep -c -F 'container stop --time' "$TEST_ROOT/container.sh")" -eq 2 ]]
+
+  [[ "$(< "$TEST_ROOT/container.sh")" =~ CONTAINER_STOP_TIMEOUT_SECONDS=([0-9]+) ]]
+  stop_timeout="${BASH_REMATCH[1]}"
+  [[ "$(< "$TEST_ROOT/container/entrypoint.sh")" =~ ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=([0-9]+) ]]
+  backstop_timeout="${BASH_REMATCH[1]}"
+
+  [ -n "$stop_timeout" ]
+  [ -n "$backstop_timeout" ]
+  ((stop_timeout > backstop_timeout))
+}

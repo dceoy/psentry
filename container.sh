@@ -26,6 +26,11 @@ fi
 readonly CONTAINER_HOME='/home/agent'
 readonly HOME_VOLUME="${HOME_VOLUME:-psentry-home}"
 readonly MIN_MACOS_MAJOR=26
+# Must exceed container/entrypoint.sh's ACTIVE_SHUTDOWN_TIMEOUT_SECONDS (10):
+# `container stop` force-kills the whole container after this many seconds,
+# so it must not fire before the entrypoint's own SIGKILL backstop has a
+# chance to finish VNC/Oracle/Chromium cleanup.
+readonly CONTAINER_STOP_TIMEOUT_SECONDS=15
 readonly SENTRY_ORACLE_HOME="${CONTAINER_HOME}/.local/share/psentry/oracle-home"
 
 container_running() {
@@ -198,7 +203,8 @@ down() {
   start_container_system
   if container_running; then
     printf "Stopping container '%s'...\n" "${NAME}"
-    container stop "${NAME}" > /dev/null 2>&1 || true
+    container stop --time "${CONTAINER_STOP_TIMEOUT_SECONDS}" "${NAME}" \
+      > /dev/null 2>&1 || true
   else
     printf "Container '%s' is not running.\n" "${NAME}"
   fi
@@ -305,7 +311,8 @@ clean() {
   check
   start_container_system
   if container_running; then
-    container stop "${NAME}" > /dev/null
+    container stop --time "${CONTAINER_STOP_TIMEOUT_SECONDS}" "${NAME}" \
+      > /dev/null
   fi
   if container_exists; then
     container delete "${NAME}" > /dev/null
