@@ -4,7 +4,6 @@ setup_sentry_test() {
   GH_SHIM_STATE_DIR="$BATS_TEST_TMPDIR/shim-state"
   TEST_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
   TEST_CACHE_DIR="$BATS_TEST_TMPDIR/cache"
-  SYSTEM_DATE="$(command -v date)"
   SYSTEM_FLOCK="$(command -v flock)"
 
   mkdir -p -- \
@@ -13,7 +12,7 @@ setup_sentry_test() {
     "$TEST_RUNTIME_DIR" \
     "$TEST_CACHE_DIR"
 
-  export TEST_ROOT TEST_HOME GH_SHIM_STATE_DIR SYSTEM_DATE SYSTEM_FLOCK
+  export TEST_ROOT TEST_HOME GH_SHIM_STATE_DIR SYSTEM_FLOCK
   export HOME="$TEST_HOME"
   export PATH="$TEST_ROOT/tests/shims:$PATH"
   READY_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
@@ -64,13 +63,13 @@ setup_sentry_test() {
   export PSENTRY_GITHUB_OWNER=octo
   export PSENTRY_GITHUB_AUTHOR=octo
   export PSENTRY_PROMPT_PATH="$TEST_ROOT/share/psentry/review-prompt.md"
+  export PSENTRY_STATE_FILE="$TEST_HOME/.local/state/psentry/state.json"
   export PSENTRY_RUNTIME_DIR="$TEST_RUNTIME_DIR"
   export PSENTRY_CACHE_DIR="$TEST_CACHE_DIR"
   export PSENTRY_MAX_REVIEW_RUNTIME=5
   export SENTRY_UNDER_TEST="$TEST_ROOT/bin/psentry"
 
   unset \
-    DATE_EPOCH \
     FLOCK_BUSY \
     GH_FAIL_PR \
     GH_RACE_DIFF \
