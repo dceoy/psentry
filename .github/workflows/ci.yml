@@ -9,43 +9,10 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install lightweight shell tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes bats shellcheck shfmt
-
-      - name: Install workflow linting tools
-        env:
-          ZIZMOR_VERSION: "1.28.0"
-          YAMLLINT_VERSION: "1.38.0"
-          CHECKOV_VERSION: "3.3.8"
-          ACTIONLINT_VERSION: "1.7.12"
-        run: |
-          pipx install "zizmor==$ZIZMOR_VERSION"
-          pipx install "yamllint==$YAMLLINT_VERSION"
-          pipx install "checkov==$CHECKOV_VERSION"
-
-          mkdir -p "$HOME/.local/bin"
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          release="https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION"
-          workdir=$(mktemp -d)
-          curl -fsSLO --output-dir "$workdir" "$release/$archive"
-          curl -fsSLO --output-dir "$workdir" "$release/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
-          (cd -- "$workdir" && sha256sum --ignore-missing --check "actionlint_${ACTIONLINT_VERSION}_checksums.txt")
-          tar -xzf "$workdir/$archive" -C "$HOME/.local/bin" actionlint
-          rm -rf -- "$workdir"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Run static and offline checks
-        run: |
+    uses: dceoy/gha-for-devops/.github/workflows/shell-project-ci.yml@ff7a01d8aadc30c3e4c9b5152f3b185e427e69da
+    with:
+      runs-on: ubuntu-24.04
+      timeout-minutes: 10
+      command: |
           .agents/skills/local-qa/scripts/qa.sh
           bats tests/container.bats

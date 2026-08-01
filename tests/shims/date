@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${SYSTEM_DATE:?SYSTEM_DATE is required}"
+
+if [[ -n "${DATE_EPOCH:-}" && "${1:-}" == -u && "${2:-}" == +%s && ${#} -eq 2 ]]; then
+  printf '%s\n' "${DATE_EPOCH}"
+else
+  exec "${SYSTEM_DATE}" "${@}"
+fi

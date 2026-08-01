@@ -287,21 +287,14 @@ The executable uses a non-blocking global `flock`. If a manual pass
 overlaps an existing pass, the new process logs that another invocation holds
 the lock and exits successfully without opening another browser session.
 
-Every pass processes the normalized candidate list in deterministic
-most-recently-updated order. There is no local cursor. GitHub markers skip
-unchanged PRs quickly, each Oracle review has a bounded runtime, and failures
-continue to the remaining candidates, so an early failing or slow candidate
-cannot indefinitely starve later candidates within the search window during an
-allowed-to-complete pass. Concurrent manual runs exit through `flock`, and
-long-running passes simply delay the next fixed-delay interval without
-overlap.
-
-Repeated container restarts are an accepted exception to that guarantee: if
-the container keeps restarting before the first candidate's Oracle review
-completes or reaches its bounded timeout, every restart retries that same
-candidate and later candidates may never be attempted, because an
-interrupted review publishes no marker to distinguish it from an unstarted
-one (see [docs/architecture.md](docs/architecture.md)).
+Every pass rotates the normalized most-recently-updated candidate list by the
+current UTC minute, without a local cursor. GitHub markers skip unchanged PRs,
+each Oracle review has a bounded runtime, and failures continue to the
+remaining candidates. The minute offset also advances the starting candidate
+during repeated container restarts, so an interrupted first review cannot
+indefinitely starve the rest of the search window. Concurrent manual runs exit
+through `flock`, and long-running passes simply delay the next fixed-delay
+interval without overlap.
 
 The search window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (see
 [docs/architecture.md](docs/architecture.md) for what happens, and why it is
@@ -393,8 +386,10 @@ This formats Markdown and shell scripts, runs ShellCheck, and runs Bats
 scenarios covering the table-driven decision matrix, readiness, external
 activity, marker filtering and recovery, canonical reordering, Oracle
 errors/timeouts/empty output, stale inputs, stateless ordering, concurrency,
-legacy-state tolerance, discovery filters, and per-PR error isolation. It also lints
-and fixes the GitHub Actions workflows with zizmor, actionlint, yamllint, and
-checkov. CI requires no repository secrets.
+legacy-state tolerance, discovery filters, and per-PR error isolation. It also
+lints and fixes the GitHub Actions workflows with zizmor, actionlint, yamllint,
+and Checkov. CI invokes this same script through the reusable shell-project
+workflow, then runs `bats tests/container.bats`; it requires no repository
+secrets.
 
 The GitHub Actions workflow has read-only repository contents permission.

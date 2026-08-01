@@ -1153,10 +1153,11 @@ EOF
   grep -q -- '--limit 1000' "$GH_SHIM_STATE_DIR/gh.log"
 }
 
-@test "candidate processing order follows recency, not a fixed repository/number order" {
+@test "candidate order rotates by UTC minute without persistent state" {
   export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=
+  export DATE_EPOCH=0
 
   invoke_sentry --dry-run
 
@@ -1164,6 +1165,15 @@ EOF
   processing_order=$(grep -o 'eligible octo/example#[0-9]*' <<< "$output" \
     | grep -o '[0-9]*$' | tr '\n' ',')
   [ "$processing_order" = "2,1," ]
+
+  export DATE_EPOCH=60
+  invoke_sentry --dry-run
+
+  [ "$status" -eq 0 ]
+  processing_order=$(grep -o 'eligible octo/example#[0-9]*' <<< "$output" \
+    | grep -o '[0-9]*$' | tr '\n' ',')
+  [ "$processing_order" = "1,2," ]
+  [ ! -e "$TEST_HOME/.local/state/psentry/state.json" ]
 }
 
 @test "a timed-out candidate does not starve later candidates" {
@@ -1172,6 +1182,7 @@ EOF
   export GH_DRAFT_NUMBERS=
   export GH_FIXTURE_1="$READY_FIXTURE"
   export GH_FIXTURE_2="$READY_FIXTURE"
+  export DATE_EPOCH=0
   export ORACLE_SLEEP=5
   export ORACLE_SLEEP_PR_NUMBER=2
 

@@ -1674,7 +1674,7 @@ process_candidate() {
 }
 
 run_sentry() {
-  local candidates_file candidate
+  local candidates_file candidate candidate_offset epoch_minute
   local failures=0
   local processed=0
   local -a candidates
@@ -1698,6 +1698,11 @@ run_sentry() {
     return 1
   fi
   mapfile -t candidates < <(jq -c '.[]' "$candidates_file")
+  if ((${#candidates[@]} > 1)); then
+    epoch_minute=$(($(date -u +%s) / 60))
+    candidate_offset=$((epoch_minute % ${#candidates[@]}))
+    candidates=("${candidates[@]:candidate_offset}" "${candidates[@]:0:candidate_offset}")
+  fi
 
   for candidate in "${candidates[@]}"; do
     ((processed += 1))

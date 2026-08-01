@@ -23,29 +23,16 @@ The sentry performs two bounded searches, ordered by most recent update so
 newly active pull requests cannot remain behind a fixed set of older results:
 `draft:false` supplies eligible work, while `draft:true` supplies observations
 needed to recognize a later draft-to-ready transition. Drafts are never passed
-to Oracle. The normalized list keeps that deterministic most-recently-updated
-order on every pass and is not rotated through local persistence.
+to Oracle. The normalized most-recently-updated list is rotated by a stateless
+offset: the current UTC epoch minute modulo the candidate count.
 
-This stateless order does not starve later candidates within a single search
-window that is allowed to run to completion: unchanged PRs with valid markers
-are skipped, each Oracle attempt has a bounded runtime, and a failed attempt
-does not stop the remaining candidates. More eligible PRs make a pass longer
-rather than imposing a per-pass work budget. Concurrent manual passes exit
-through the global `flock`, and fixed-delay polling never overlaps passes.
-
-Repeated container restarts are a different, unresolved risk that keeps #24
-open rather than satisfying it: restarting recomputes the same newest-first
-order from current GitHub data, so if the container is restarted before the
-first candidate's Oracle review completes or reaches its bounded timeout,
-every restart retries that same candidate from scratch, and later eligible
-candidates may never be attempted. An interrupted review publishes no GitHub
-marker, so nothing in the search results or marker history can distinguish a
-candidate that keeps failing to finish from one that has not started yet,
-and no ordering rule derived purely from current GitHub data can rotate past
-it without further work. #24 should stay open until this is either fixed
-(for example a stateless, fine-grained, wall-clock-derived rotation of the
-starting candidate, or bounded local rotation state scoped to this case) or
-explicitly accepted as a known limitation by a maintainer.
+Within a completed pass, unchanged PRs with valid markers are skipped, each
+Oracle attempt has a bounded runtime, and a failed attempt does not stop the
+remaining candidates. During repeated container restarts, the minute offset
+advances the starting point through every candidate instead of retrying a
+fixed first PR indefinitely. More eligible PRs make a pass longer rather than
+imposing a per-pass work budget. Concurrent manual passes exit through the
+global `flock`, and fixed-delay polling never overlaps passes.
 
 The window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (default and
 maximum `1000`, GitHub's own search API ceiling per query). If the number of

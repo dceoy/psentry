@@ -4,6 +4,7 @@ setup_sentry_test() {
   GH_SHIM_STATE_DIR="$BATS_TEST_TMPDIR/shim-state"
   TEST_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
   TEST_CACHE_DIR="$BATS_TEST_TMPDIR/cache"
+  SYSTEM_DATE="$(command -v date)"
   SYSTEM_FLOCK="$(command -v flock)"
 
   mkdir -p -- \
@@ -12,7 +13,7 @@ setup_sentry_test() {
     "$TEST_RUNTIME_DIR" \
     "$TEST_CACHE_DIR"
 
-  export TEST_ROOT TEST_HOME GH_SHIM_STATE_DIR SYSTEM_FLOCK
+  export TEST_ROOT TEST_HOME GH_SHIM_STATE_DIR SYSTEM_DATE SYSTEM_FLOCK
   export HOME="$TEST_HOME"
   export PATH="$TEST_ROOT/tests/shims:$PATH"
   READY_FIXTURE="$TEST_ROOT/tests/fixtures/pr-ready.json"
@@ -69,6 +70,7 @@ setup_sentry_test() {
   export SENTRY_UNDER_TEST="$TEST_ROOT/bin/psentry"
 
   unset \
+    DATE_EPOCH \
     FLOCK_BUSY \
     GH_FAIL_PR \
     GH_RACE_DIFF \
