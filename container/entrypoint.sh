@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+# Fixed rather than environment-configurable: this is an internal safety
+# bound (how long to wait for a TERM-ignoring workload before SIGKILL), not
+# a documented operational setting, so it must not become an unvalidated,
+# undocumented env knob (see #21's ban on production-only test hooks). Tests
+# shorten the real wait via the container-shims/sleep marker below instead.
+readonly ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=10
+
 validate_poll_interval() {
   local status
 
@@ -78,7 +85,8 @@ reap_active() {
   local killer_pid
 
   (
-    PSENTRY_INTERNAL_SLEEP=1 sleep "${ACTIVE_SHUTDOWN_TIMEOUT_SECONDS}"
+    PSENTRY_INTERNAL_SLEEP=1 PSENTRY_INTERNAL_SHUTDOWN_BACKSTOP=1 \
+      sleep "${ACTIVE_SHUTDOWN_TIMEOUT_SECONDS}"
     kill -KILL -- "-${active_pid}" 2> /dev/null || true
   ) &
   killer_pid=$!
@@ -146,8 +154,7 @@ main() {
   : "${HOME:?HOME must be set}"
   : "${USER_NAME:?USER_NAME must be set}"
   PSENTRY_POLL_INTERVAL="${PSENTRY_POLL_INTERVAL:-15m}"
-  readonly HOME USER_NAME PSENTRY_POLL_INTERVAL POLL_INTERVAL_MINIMUM_SECONDS=0.1 \
-    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS="${ACTIVE_SHUTDOWN_TIMEOUT_SECONDS:-10}"
+  readonly HOME USER_NAME PSENTRY_POLL_INTERVAL POLL_INTERVAL_MINIMUM_SECONDS=0.1
 
   if (("$(id -u)" == 0)); then
     local user_uid user_gid

@@ -205,7 +205,7 @@ wait_entrypoint() {
   start_entrypoint \
     ENTRYPOINT_BLOCK_PSENTRY=1 \
     ENTRYPOINT_TERM_DELAY=5 \
-    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=0.3
+    ENTRYPOINT_SHUTDOWN_BACKSTOP_SECONDS=0.3
   wait_for_event '^psentry-start:1:'
   stop_entrypoint TERM
 
@@ -218,7 +218,7 @@ wait_entrypoint() {
   start_entrypoint \
     ENTRYPOINT_BLOCK_PSENTRY=1 \
     ENTRYPOINT_TERM_DELAY=10 \
-    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=1
+    ENTRYPOINT_SHUTDOWN_BACKSTOP_SECONDS=1
   wait_for_event '^psentry-start:1:'
   local workload_pid
   read -r workload_pid < "$ENTRYPOINT_TMP/psentry.pid"
@@ -242,7 +242,7 @@ wait_entrypoint() {
   start_entrypoint \
     ENTRYPOINT_BLOCK_PSENTRY=1 \
     ENTRYPOINT_CHILD_IGNORES_TERM=1 \
-    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=0.3
+    ENTRYPOINT_SHUTDOWN_BACKSTOP_SECONDS=0.3
   wait_for_event '^psentry-start:1:'
   wait_for_log '^psentry-child-start$'
   local child_pid
@@ -289,7 +289,7 @@ wait_entrypoint() {
     ENTRYPOINT_BLOCK_PSENTRY=1 \
     ENTRYPOINT_TERM_DELAY=5 \
     ENTRYPOINT_WEBSOCKIFY_EXIT_AFTER_PSENTRY=1 \
-    ACTIVE_SHUTDOWN_TIMEOUT_SECONDS=0.3
+    ENTRYPOINT_SHUTDOWN_BACKSTOP_SECONDS=0.3
   wait_entrypoint
 
   [ "$ENTRYPOINT_STATUS" -eq 1 ]

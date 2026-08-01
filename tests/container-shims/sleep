@@ -3,6 +3,14 @@
 set -euo pipefail
 
 if [[ "${PSENTRY_INTERNAL_SLEEP:-0}" == 1 ]]; then
+  if [[ "${PSENTRY_INTERNAL_SHUTDOWN_BACKSTOP:-0}" == 1 \
+    && -n "${ENTRYPOINT_SHUTDOWN_BACKSTOP_SECONDS:-}" ]]; then
+    # entrypoint.sh's real SIGKILL-backstop duration is a fixed internal
+    # constant, not an env knob (see entrypoint.sh), so tests substitute a
+    # fast duration here, at the shim, instead of asking production code to
+    # accept an override it should never see.
+    exec "${SYSTEM_SLEEP:?}" "${ENTRYPOINT_SHUTDOWN_BACKSTOP_SECONDS}"
+  fi
   exec "${SYSTEM_SLEEP:?}" "$@"
 fi
 
