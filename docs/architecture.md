@@ -24,15 +24,18 @@ newly active pull requests cannot remain behind a fixed set of older results:
 `draft:false` supplies eligible work, while `draft:true` supplies observations
 needed to recognize a later draft-to-ready transition. Drafts are never passed
 to Oracle. The normalized most-recently-updated list is rotated by a stateless
-offset: the current UTC epoch minute modulo the candidate count.
+Beatty-sequence offset: `floor(epoch_seconds * sqrt(2))` modulo the candidate
+count. Sampling this sequence at any fixed whole-second restart interval still
+has an irrational stride, so a periodic restart cannot stay locked to one
+candidate.
 
 Within a completed pass, unchanged PRs with valid markers are skipped, each
 Oracle attempt has a bounded runtime, and a failed attempt does not stop the
-remaining candidates. During repeated container restarts, the minute offset
-advances the starting point through every candidate instead of retrying a
-fixed first PR indefinitely. More eligible PRs make a pass longer rather than
-imposing a per-pass work budget. Concurrent manual passes exit through the
-global `flock`, and fixed-delay polling never overlaps passes.
+remaining candidates. During repeated container restarts, the nonlinear
+offset advances the starting point through every candidate instead of retrying
+a fixed first PR indefinitely. More eligible PRs make a pass longer rather
+than imposing a per-pass work budget. Concurrent manual passes exit through
+the global `flock`, and fixed-delay polling never overlaps passes.
 
 The window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (default and
 maximum `1000`, GitHub's own search API ceiling per query). If the number of

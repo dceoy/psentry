@@ -287,11 +287,11 @@ The executable uses a non-blocking global `flock`. If a manual pass
 overlaps an existing pass, the new process logs that another invocation holds
 the lock and exits successfully without opening another browser session.
 
-Every pass rotates the normalized most-recently-updated candidate list by the
-current UTC minute, without a local cursor. GitHub markers skip unchanged PRs,
-each Oracle review has a bounded runtime, and failures continue to the
-remaining candidates. The minute offset also advances the starting candidate
-during repeated container restarts, so an interrupted first review cannot
+Every pass rotates the normalized most-recently-updated candidate list with a
+stateless nonlinear wall-clock offset. GitHub markers skip unchanged PRs, each
+Oracle review has a bounded runtime, and failures continue to the remaining
+candidates. Unlike a direct clock modulo, the offset cannot remain phase-locked
+to a fixed whole-second restart cadence, so an interrupted first review cannot
 indefinitely starve the rest of the search window. Concurrent manual runs exit
 through `flock`, and long-running passes simply delay the next fixed-delay
 interval without overlap.

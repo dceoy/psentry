@@ -1674,7 +1674,7 @@ process_candidate() {
 }
 
 run_sentry() {
-  local candidates_file candidate candidate_offset epoch_minute
+  local candidates_file candidate candidate_offset epoch_second
   local failures=0
   local processed=0
   local -a candidates
@@ -1699,8 +1699,13 @@ run_sentry() {
   fi
   mapfile -t candidates < <(jq -c '.[]' "$candidates_file")
   if ((${#candidates[@]} > 1)); then
-    epoch_minute=$(($(date -u +%s) / 60))
-    candidate_offset=$((epoch_minute % ${#candidates[@]}))
+    epoch_second=$(date -u +%s)
+    # The irrational multiplier keeps fixed whole-second restart intervals
+    # from remaining trapped in one modulo class.
+    candidate_offset=$(awk \
+      -v count="${#candidates[@]}" \
+      -v epoch="$epoch_second" \
+      'BEGIN { print int(epoch * sqrt(2)) % count }')
     candidates=("${candidates[@]:candidate_offset}" "${candidates[@]:0:candidate_offset}")
   fi
 

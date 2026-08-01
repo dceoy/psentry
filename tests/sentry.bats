@@ -1153,7 +1153,7 @@ EOF
   grep -q -- '--limit 1000' "$GH_SHIM_STATE_DIR/gh.log"
 }
 
-@test "candidate order rotates by UTC minute without persistent state" {
+@test "candidate order escapes a fixed two-minute restart cadence without persistent state" {
   export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=
@@ -1166,7 +1166,7 @@ EOF
     | grep -o '[0-9]*$' | tr '\n' ',')
   [ "$processing_order" = "2,1," ]
 
-  export DATE_EPOCH=60
+  export DATE_EPOCH=120
   invoke_sentry --dry-run
 
   [ "$status" -eq 0 ]
