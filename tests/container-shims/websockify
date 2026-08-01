@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+trap 'printf "websockify-signal:INT\n" >> "${ENTRYPOINT_LOG}"; exit 0' INT
+trap 'printf "websockify-signal:TERM\n" >> "${ENTRYPOINT_LOG}"; exit 0' TERM
+printf 'websockify-start:%s\n' "$*" >> "${ENTRYPOINT_LOG:?}"
+
+if [[ "${ENTRYPOINT_WEBSOCKIFY_EXIT:-0}" == 1 ]]; then
+  printf 'websockify-exit:1\n' >> "${ENTRYPOINT_LOG}"
+  exit 9
+fi
+
+if [[ "${ENTRYPOINT_WEBSOCKIFY_EXIT_AFTER_PSENTRY:-0}" == 1 ]]; then
+  while ! grep -q -- '^psentry-start:' "${ENTRYPOINT_LOG}"; do
+    "${SYSTEM_SLEEP:?}" 0.01
+  done
+  printf 'websockify-exit:1\n' >> "${ENTRYPOINT_LOG}"
+  exit 9
+fi
+
+while true; do
+  "${SYSTEM_SLEEP:?}" 1
+done

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+count_file="${ENTRYPOINT_TMP:?}/psentry-count"
+count=0
+[[ ! -f "${count_file}" ]] || read -r count < "${count_file}"
+((count += 1))
+printf '%s\n' "${count}" > "${count_file}"
+printf 'psentry-start:%s:%s\n' "${count}" "$*" >> "${ENTRYPOINT_LOG:?}"
+
+if [[ "${ENTRYPOINT_FAIL_FIRST:-0}" == 1 && "${count}" -eq 1 ]]; then
+  printf 'psentry-fail:%s\n' "${count}" >> "${ENTRYPOINT_LOG}"
+  exit 9
+fi
+
+if [[ "${ENTRYPOINT_BLOCK_PSENTRY:-0}" == 1 ]]; then
+  printf '%s\n' "$$" > "${ENTRYPOINT_TMP:?}/psentry.pid"
+  trap 'printf "psentry-signal:INT\n" >> "${ENTRYPOINT_LOG}"; exit 130' INT
+
+  if [[ "${ENTRYPOINT_CHILD_IGNORES_TERM:-0}" == 1 ]]; then
+    # Simulate a foreground descendant that ignores TERM and outlives its
+    # parent, like bin/psentry's Oracle subprocess: this leader exits on
+    # TERM immediately, before the child does, so a fix must keep tracking
+    # the whole process group instead of stopping once the leader PID exits.
+    (
+      trap '' TERM
+      "${SYSTEM_SLEEP:?}" 100
+    ) &
+    printf '%s\n' "$!" > "${ENTRYPOINT_TMP:?}/psentry-child.pid"
+    printf 'psentry-child-start\n' >> "${ENTRYPOINT_LOG}"
+    trap 'printf "psentry-signal:TERM\n" >> "${ENTRYPOINT_LOG}"; exit 143' TERM
+    wait
+  fi
+
+  trap '
+    printf "psentry-signal:TERM\n" >> "${ENTRYPOINT_LOG}"
+    "${SYSTEM_SLEEP:?}" "${ENTRYPOINT_TERM_DELAY:-0}"
+    printf "psentry-delayed-exit\n" >> "${ENTRYPOINT_LOG}"
+    exit 143
+  ' TERM
+  # Block on a real foreground child, like bin/psentry's Oracle subprocess,
+  # so a fix must signal the process group rather than just this PID.
+  "${SYSTEM_SLEEP:?}" 100
+fi

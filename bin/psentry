@@ -6,7 +6,6 @@ umask 077
 
 readonly PROGRAM_NAME="psentry"
 readonly PROGRAM_VERSION="0.1.0"
-readonly STATE_SCHEMA_VERSION=1
 readonly MARKER_VERSION=6
 
 SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -14,9 +13,9 @@ SCRIPT_DIR="$(dirname -- "$SCRIPT_PATH")"
 SOURCE_ROOT="$(dirname -- "$SCRIPT_DIR")"
 
 DRY_RUN_CLI=""
+PRINT_LOCK_FILE_CLI=""
 RUN_TMP=""
 RUN_TMP_OWNED=0
-STATE_JSON=""
 SENTRY_LOGIN=""
 SNAPSHOT_MARKER=""
 DECISION_REDUCER_PATH=""
@@ -36,10 +35,7 @@ usage() {
   cat << 'EOF'
 Usage:
   psentry [--dry-run]
-  psentry install
-  psentry enable
-  psentry disable
-  psentry uninstall
+  psentry --print-lock-file
   psentry --help
   psentry --version
 
@@ -47,16 +43,13 @@ Run one discovery and review pass. Configuration is read from
 ${XDG_CONFIG_HOME:-$HOME/.config}/psentry/env by default.
 
 Options:
-  --dry-run   Discover PRs and report decisions without Oracle, GitHub writes,
-              or local state changes.
-  --help      Show this help.
-  --version   Show the program version.
-
-Lifecycle commands:
-  install     Install the executable, prompt, and systemd user units.
-  enable      Enable and start the systemd user timer.
-  disable     Disable and stop the systemd user timer.
-  uninstall   Remove installed project files. Configuration and state remain.
+  --dry-run          Discover PRs and report decisions without Oracle,
+                     GitHub writes, or persistent local changes.
+  --print-lock-file  Print the resolved global lock file path and exit,
+                     without running a pass. Used by container tooling to
+                     serialize manual Oracle logins with a running pass.
+  --help             Show this help.
+  --version          Show the program version.
 EOF
 }
 
@@ -151,74 +144,14 @@ ensure_private_directory() {
   chmod 700 -- "$path"
 }
 
-install_project() {
-  local executable_source="$SOURCE_ROOT/bin/$PROGRAM_NAME"
-  local prompt_source="$SOURCE_ROOT/share/$PROGRAM_NAME/review-prompt.md"
-  local service_source="$SOURCE_ROOT/systemd/$PROGRAM_NAME.service"
-  local timer_source="$SOURCE_ROOT/systemd/$PROGRAM_NAME.timer"
-  local reducer_source="$SOURCE_ROOT/share/$PROGRAM_NAME/decision-reducer.jq"
-  local executable_target="${HOME}/.local/bin/$PROGRAM_NAME"
-  local data_target="${HOME}/.local/share/$PROGRAM_NAME/review-prompt.md"
-  local unit_directory="${HOME}/.config/systemd/user"
-
-  require_command install
-  require_command systemctl
-  [[ -f "$executable_source" && -f "$prompt_source" &&
-    -f "$service_source" && -f "$timer_source" && -f "$reducer_source" ]] \
-    || die "install must be run from a complete project checkout"
-
-  install -D -m 755 -- "$executable_source" "$executable_target"
-  install -D -m 644 -- "$prompt_source" "$data_target"
-  install -D -m 644 -- "$reducer_source" \
-    "${HOME}/.local/share/$PROGRAM_NAME/decision-reducer.jq"
-  install -D -m 644 -- "$service_source" "$unit_directory/$PROGRAM_NAME.service"
-  install -D -m 644 -- "$timer_source" "$unit_directory/$PROGRAM_NAME.timer"
-  systemctl --user daemon-reload
-
-  log INFO "installed $PROGRAM_NAME under ${HOME}/.local"
-  log INFO "create ${HOME}/.config/$PROGRAM_NAME/env, then run: $PROGRAM_NAME enable"
-}
-
-enable_timer() {
-  require_command systemctl
-  systemctl --user enable --now "$PROGRAM_NAME.timer"
-  log INFO "enabled and started $PROGRAM_NAME.timer"
-}
-
-disable_timer() {
-  require_command systemctl
-  systemctl --user disable --now "$PROGRAM_NAME.timer"
-  log INFO "disabled and stopped $PROGRAM_NAME.timer"
-}
-
-uninstall_project() {
-  local unit_directory="${HOME}/.config/systemd/user"
-
-  require_command rm
-  require_command rmdir
-  require_command systemctl
-
-  systemctl --user disable --now "$PROGRAM_NAME.timer" > /dev/null 2>&1 || true
-  rm -f -- \
-    "${HOME}/.local/bin/$PROGRAM_NAME" \
-    "${HOME}/.local/share/$PROGRAM_NAME/review-prompt.md" \
-    "${HOME}/.local/share/$PROGRAM_NAME/decision-reducer.jq" \
-    "$unit_directory/$PROGRAM_NAME.service" \
-    "$unit_directory/$PROGRAM_NAME.timer"
-  rmdir -- "${HOME}/.local/share/$PROGRAM_NAME" 2> /dev/null || true
-  systemctl --user daemon-reload
-  log INFO "removed installed project files; configuration and state were preserved"
-}
-
 parse_arguments() {
-  COMMAND="run"
-
   while (($#)); do
     case "$1" in
       --dry-run)
-        [[ "$COMMAND" == "run" ]] \
-          || die "--dry-run cannot be combined with a lifecycle command"
         DRY_RUN_CLI=1
+        ;;
+      --print-lock-file)
+        PRINT_LOCK_FILE_CLI=1
         ;;
       --help | -h)
         usage
@@ -227,11 +160,6 @@ parse_arguments() {
       --version)
         printf '%s %s\n' "$PROGRAM_NAME" "$PROGRAM_VERSION"
         exit 0
-        ;;
-      install | enable | disable | uninstall)
-        [[ "$COMMAND" == "run" && -z "$DRY_RUN_CLI" ]] \
-          || die "only one lifecycle command may be specified"
-        COMMAND=$1
         ;;
       *)
         die "unknown argument: $1 (try --help)"
@@ -250,12 +178,10 @@ source_configuration() {
   [[ -n "${PSENTRY_CONFIG_FILE:-}" ]] && config_was_explicit=1
 
   XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
-  XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
   XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
   XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 
   PSENTRY_CONFIG_FILE="${PSENTRY_CONFIG_FILE:-${XDG_CONFIG_HOME}/$PROGRAM_NAME/env}"
-  PSENTRY_STATE_FILE="${PSENTRY_STATE_FILE:-${XDG_STATE_HOME}/$PROGRAM_NAME/state.json}"
   PSENTRY_CACHE_DIR="${PSENTRY_CACHE_DIR:-${XDG_CACHE_HOME}/$PROGRAM_NAME}"
   PSENTRY_ORACLE_HOME_DIR="${PSENTRY_ORACLE_HOME_DIR:-${XDG_DATA_HOME}/$PROGRAM_NAME/oracle-home}"
   PSENTRY_RUNTIME_DIR="${PSENTRY_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}/$PROGRAM_NAME-$(id -u)}"
@@ -273,7 +199,13 @@ source_configuration() {
 
   PSENTRY_GITHUB_OWNER="${PSENTRY_GITHUB_OWNER:-}"
   PSENTRY_GITHUB_AUTHOR="${PSENTRY_GITHUB_AUTHOR:-}"
-  PSENTRY_PR_SEARCH_LIMIT="${PSENTRY_PR_SEARCH_LIMIT:-50}"
+  # GitHub's search API never returns more than 1000 results for a single
+  # query; defaulting to that ceiling (rather than a low, arbitrary value)
+  # minimizes how easily a stateless pass could permanently exclude older
+  # ready PRs. It does not eliminate that risk: an owner/author with more
+  # than 1000 matching open PRs would still starve the oldest of them on
+  # every pass. See docs/architecture.md for why that bound is accepted.
+  PSENTRY_PR_SEARCH_LIMIT="${PSENTRY_PR_SEARCH_LIMIT:-1000}"
   PSENTRY_ORACLE_BIN="${PSENTRY_ORACLE_BIN:-oracle}"
   PSENTRY_ORACLE_MODEL="${PSENTRY_ORACLE_MODEL:-gpt-5.5-pro}"
   PSENTRY_ORACLE_THINKING_TIME="${PSENTRY_ORACLE_THINKING_TIME:-extended}"
@@ -355,7 +287,7 @@ validate_dependencies() {
   local dependency
   local dependencies=(
     gh jq "$PSENTRY_ORACLE_BIN" flock timeout sha256sum awk
-    date id install stat chmod mktemp mv rm rmdir dirname readlink
+    date id install stat chmod mktemp rm dirname readlink
     grep wc
   )
 
@@ -365,7 +297,7 @@ validate_dependencies() {
 }
 
 prepare_runtime() {
-  local dry_run_root lock_directory state_directory
+  local dry_run_root lock_directory
 
   if ((PSENTRY_DRY_RUN)); then
     dry_run_root=${TMPDIR:-/tmp}
@@ -384,9 +316,7 @@ prepare_runtime() {
     return 0
   fi
 
-  state_directory=$(dirname -- "$PSENTRY_STATE_FILE")
   lock_directory=$(dirname -- "$PSENTRY_LOCK_FILE")
-  ensure_private_directory "$state_directory"
   ensure_private_directory "$PSENTRY_CACHE_DIR"
   ensure_private_directory "$PSENTRY_ORACLE_HOME_DIR"
   ensure_private_directory "$PSENTRY_RUNTIME_DIR"
@@ -410,86 +340,10 @@ cleanup() {
   fi
 }
 
-load_state() {
-  if [[ ! -e "$PSENTRY_STATE_FILE" ]]; then
-    STATE_JSON='{"version":'"$STATE_SCHEMA_VERSION"'}'
-    return 0
-  fi
-
-  [[ -f "$PSENTRY_STATE_FILE" && ! -L "$PSENTRY_STATE_FILE" ]] \
-    || die "state file must be a regular, non-symlink file: $PSENTRY_STATE_FILE"
-  [[ "$(stat -c '%u' -- "$PSENTRY_STATE_FILE")" == "$(id -u)" ]] \
-    || die "state file must be owned by the current user"
-  if ((PSENTRY_DRY_RUN == 0)); then
-    chmod 600 -- "$PSENTRY_STATE_FILE"
-  fi
-
-  if ! jq -e '
-    type == "object"
-    and .version == 1
-    and (keys - ["candidate_cursor", "version"] | length == 0)
-    and (
-      (has("candidate_cursor") | not)
-      or (
-        .candidate_cursor
-        | type == "string"
-          and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
-      )
-    )
-  ' "$PSENTRY_STATE_FILE" > /dev/null; then
-    die "malformed or unsupported state file: $PSENTRY_STATE_FILE"
-  fi
-  if ! STATE_JSON=$(jq -cS . "$PSENTRY_STATE_FILE"); then
-    die "failed to load state file: $PSENTRY_STATE_FILE"
-  fi
-}
-
-persist_state() {
-  local state_directory temporary_state
-
-  ((PSENTRY_DRY_RUN == 0)) || return 0
-  state_directory=$(dirname -- "$PSENTRY_STATE_FILE")
-  temporary_state=$(mktemp -- "$state_directory/.state.XXXXXXXX")
-
-  if ! printf '%s\n' "$STATE_JSON" | jq -S . > "$temporary_state"; then
-    rm -f -- "$temporary_state"
-    log ERROR "failed to serialize state"
-    return 1
-  fi
-  chmod 600 -- "$temporary_state"
-  if ! mv -f -- "$temporary_state" "$PSENTRY_STATE_FILE"; then
-    rm -f -- "$temporary_state"
-    log ERROR "failed to atomically replace state file"
-    return 1
-  fi
-}
-
-checkpoint_candidate_cursor() {
-  local candidate=$1
-  local key repository number updated_state
-
-  repository=$(jq -r '.repository.nameWithOwner // ""' <<< "$candidate") \
-    || return 1
-  number=$(jq -r '.number // 0' <<< "$candidate") || return 1
-  [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
-    "$number" =~ ^[1-9][0-9]*$ ]] \
-    || return 1
-  key="$repository#$number"
-
-  if ! updated_state=$(jq -cS --arg key "$key" \
-    '.candidate_cursor = $key' <<< "$STATE_JSON"); then
-    log ERROR "failed to update candidate cursor for $key"
-    return 1
-  fi
-  STATE_JSON=$updated_state
-  persist_state
-}
-
 discover_candidates() {
   local ready_file="$RUN_TMP/ready.json"
   local drafts_file="$RUN_TMP/drafts.json"
   local candidates_file="$RUN_TMP/candidates.json"
-  local candidate_cursor
   local common_args=(
     --owner "$PSENTRY_GITHUB_OWNER"
     --author "$PSENTRY_GITHUB_AUTHOR"
@@ -515,10 +369,8 @@ discover_candidates() {
     return 1
   fi
 
-  candidate_cursor=$(jq -r '.candidate_cursor // ""' <<< "$STATE_JSON") \
-    || return 1
-  if ! jq -sS --arg candidate_cursor "$candidate_cursor" '
-    ((
+  if ! jq -sS '
+    (
       [.[0][] | . + {_search_eligible: true}]
       + [.[1][] | . + {_search_eligible: false}]
     )
@@ -526,19 +378,7 @@ discover_candidates() {
     | group_by([.repository.nameWithOwner, .number])
     | map(last)
     | sort_by(.updatedAt)
-    | reverse) as $candidates
-    | (
-        $candidates
-        | map(.repository.nameWithOwner + "#" + (.number | tostring))
-        | index($candidate_cursor)
-      ) as $cursor_index
-    | if $cursor_index == null
-      then $candidates
-      else (
-        $candidates[($cursor_index + 1):]
-        + $candidates[:($cursor_index + 1)]
-      )
-      end
+    | reverse
   ' "$ready_file" "$drafts_file" > "$candidates_file"; then
     log ERROR "failed to normalize GitHub discovery results"
     return 1
@@ -1681,7 +1521,7 @@ publish_review() {
   fi
 
   if snapshot_has_publication "$fresh_snapshot" "$initial_fingerprint" "$initial_head"; then
-    log INFO "matching GitHub marker appeared during review; reconciling local state"
+    log INFO "matching GitHub marker appeared during review; accepting GitHub history"
     return 2
   fi
 
@@ -1854,7 +1694,6 @@ run_sentry() {
   PSENTRY_GITHUB_OWNER="${PSENTRY_GITHUB_OWNER:-$SENTRY_LOGIN}"
   PSENTRY_GITHUB_AUTHOR="${PSENTRY_GITHUB_AUTHOR:-$SENTRY_LOGIN}"
 
-  load_state
   if ! candidates_file=$(discover_candidates); then
     return 1
   fi
@@ -1862,11 +1701,6 @@ run_sentry() {
 
   for candidate in "${candidates[@]}"; do
     ((processed += 1))
-    if ((PSENTRY_DRY_RUN == 0)) \
-      && ! checkpoint_candidate_cursor "$candidate"; then
-      ((failures += 1))
-      log ERROR "candidate rotation checkpoint failed; continuing without a durable cursor"
-    fi
     if ! process_candidate "$candidate"; then
       ((failures += 1))
       log ERROR "candidate failed; continuing with remaining PRs"
@@ -1880,13 +1714,12 @@ run_sentry() {
 main() {
   parse_arguments "$@"
   require_unprivileged_user
-  case "$COMMAND" in
-    run) run_sentry ;;
-    install) install_project ;;
-    enable) enable_timer ;;
-    disable) disable_timer ;;
-    uninstall) uninstall_project ;;
-  esac
+  if [[ -n "$PRINT_LOCK_FILE_CLI" ]]; then
+    source_configuration
+    printf '%s\n' "$PSENTRY_LOCK_FILE"
+    return 0
+  fi
+  run_sentry
 }
 
 main "$@"

@@ -73,7 +73,6 @@ RUN \
         /opt/home-skel/.config/psentry \
         /opt/home-skel/.local/share/psentry/oracle-home \
         /usr/local/share/psentry \
-        /workspace \
       && cp -a "/home/${USER_NAME}/." /opt/home-skel/ \
       && chmod 700 \
         /opt/home-skel/.config/psentry \
@@ -87,15 +86,14 @@ COPY --chmod=0644 share/psentry/review-prompt.md \
 COPY --chmod=0644 share/psentry/decision-reducer.jq \
   /usr/local/share/psentry/decision-reducer.jq
 
-RUN chown -R "${USER_NAME}:${USER_NAME}" /opt/home-skel /workspace
+RUN chown -R "${USER_NAME}:${USER_NAME}" /opt/home-skel
 
 ENV \
   HOME="/home/${USER_NAME}" \
-  USER_NAME="${USER_NAME}" \
-  WORKSPACE_DIR='/workspace'
+  USER_NAME="${USER_NAME}"
 
 USER ${USER_NAME}
-WORKDIR /workspace
+WORKDIR /home/${USER_NAME}
 
 EXPOSE ${NOVNC_PORT}
 

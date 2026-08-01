@@ -55,16 +55,12 @@ draft changed	.	.draft = true	baseline	null
 EOF
 }
 
-@test "an empty first-run state schedules a new eligible PR and stores only the cursor" {
+@test "a first pass schedules a new eligible PR without local scheduling state" {
   invoke_sentry
 
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
-  jq -e '
-    .version == 1
-    and .candidate_cursor == "octo/example#1"
-    and (keys | sort) == ["candidate_cursor", "version"]
-  ' "$PSENTRY_STATE_FILE"
+  [ ! -e "$TEST_HOME/.local/state/psentry/state.json" ]
 }
 
 @test "an unchanged fingerprint never invokes Oracle or posts twice" {
@@ -186,10 +182,8 @@ EOF
   while IFS=$'\t' read -r name patch expected_reason; do
     scenario_root="$BATS_TEST_TMPDIR/$name"
     export GH_SHIM_STATE_DIR="$scenario_root/shim"
-    export PSENTRY_STATE_FILE="$scenario_root/state/state.json"
     export PSENTRY_RUNTIME_DIR="$scenario_root/runtime"
     export PSENTRY_CACHE_DIR="$scenario_root/cache"
-    mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
 
     export GH_FIXTURE="$READY_FIXTURE"
     invoke_sentry
@@ -241,8 +235,6 @@ EOF
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 0 ]
   [ "$(baseline_count)" -eq 1 ]
-  jq -e '(keys | sort) == ["candidate_cursor", "version"]' \
-    "$PSENTRY_STATE_FILE"
 
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
@@ -320,7 +312,6 @@ EOF
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 2 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 2 ]
@@ -339,7 +330,7 @@ EOF
   [[ "$output" == *"ci-failure"* ]]
 }
 
-@test "a CI baseline survives state loss before the same failure recurs" {
+@test "a CI baseline survives a restart before the same failure recurs" {
   export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
@@ -350,7 +341,6 @@ EOF
   [ "$(review_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
@@ -380,12 +370,11 @@ EOF
   run ! grep -q -- '^pr comment ' "$GH_SHIM_STATE_DIR/gh.log"
 }
 
-@test "CI recovery after state loss does not schedule a new review" {
+@test "CI recovery after a restart does not schedule a new review" {
   export GH_FIXTURE="$CI_FAILURE_FIXTURE"
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   export GH_FIXTURE="$READY_FIXTURE"
   invoke_sentry
 
@@ -396,7 +385,7 @@ EOF
   [[ "$output" == *"no meaningful update"* ]]
 }
 
-@test "partial CI recovery after state loss does not schedule a new review" {
+@test "partial CI recovery after a restart does not schedule a new review" {
   two_failures="$BATS_TEST_TMPDIR/two-failures.json"
   one_failure="$BATS_TEST_TMPDIR/one-failure.json"
   make_ci_failure_fixture "$two_failures" lint test
@@ -406,7 +395,6 @@ EOF
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   export GH_FIXTURE="$one_failure"
   invoke_sentry
 
@@ -417,7 +405,7 @@ EOF
   [[ "$output" == *"no meaningful update"* ]]
 }
 
-@test "durable baseline failure identities survive consecutive state loss" {
+@test "durable baseline failure identities survive consecutive restarts" {
   three_failures="$BATS_TEST_TMPDIR/three-failures.json"
   two_failures="$BATS_TEST_TMPDIR/two-failures.json"
   one_failure="$BATS_TEST_TMPDIR/one-failure.json"
@@ -429,14 +417,12 @@ EOF
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   export GH_FIXTURE="$two_failures"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   export GH_FIXTURE="$one_failure"
   invoke_sentry
 
@@ -463,7 +449,6 @@ EOF
   [ "$(review_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
@@ -477,7 +462,7 @@ EOF
   [[ "$output" == *"no meaningful update"* ]]
 }
 
-@test "a draft baseline survives state loss before the PR becomes ready" {
+@test "a draft baseline survives a restart before the PR becomes ready" {
   invoke_sentry
   [ "$status" -eq 0 ]
 
@@ -489,7 +474,6 @@ EOF
   [ "$(review_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   invoke_sentry
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
@@ -506,11 +490,10 @@ EOF
   [[ "$output" == *"draft-to-ready"* ]]
 }
 
-@test "a draft baseline survives state loss before and after draft observation" {
+@test "a draft baseline survives restarts around draft observation" {
   invoke_sentry
   [ "$status" -eq 0 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=1
   export GH_FIXTURE="$DRAFT_FIXTURE"
@@ -519,7 +502,6 @@ EOF
   [ "$(review_count)" -eq 1 ]
   [ "$(baseline_count)" -eq 1 ]
 
-  rm -f -- "$PSENTRY_STATE_FILE"
   export GH_READY_NUMBERS=1
   export GH_DRAFT_NUMBERS=
   export GH_FIXTURE="$READY_FIXTURE"
@@ -794,18 +776,15 @@ EOF
   [ "$(oracle_count)" -eq 1 ]
 }
 
-@test "the sentry marker is authoritative after local state deletion" {
+@test "the sentry marker is authoritative across stateless passes" {
   invoke_sentry
   [ "$status" -eq 0 ]
-  rm -f -- "$PSENTRY_STATE_FILE"
 
   invoke_sentry
 
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
   [ "$(oracle_count)" -eq 1 ]
-  jq -e '(keys | sort) == ["candidate_cursor", "version"]' \
-    "$PSENTRY_STATE_FILE"
 }
 
 @test "spoofed malformed non-canonical and foreign markers are untrusted" {
@@ -1087,23 +1066,6 @@ EOF
   ' "$GH_SHIM_STATE_DIR/oracle-metadata.json"
 }
 
-@test "GitHub acceptance remains authoritative after cursor write failure" {
-  export FAIL_STATE_MV=1
-  invoke_sentry
-
-  [ "$status" -ne 0 ]
-  [ "$(review_count)" -eq 1 ]
-  [ "$(oracle_count)" -eq 1 ]
-  [ ! -e "$PSENTRY_STATE_FILE" ]
-
-  unset FAIL_STATE_MV
-  invoke_sentry
-
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 1 ]
-  [ "$(oracle_count)" -eq 1 ]
-}
-
 @test "a concurrent invocation exits cleanly before discovery" {
   export FLOCK_BUSY=1
   invoke_sentry
@@ -1115,13 +1077,35 @@ EOF
   [[ "$output" == *"holds the global lock"* ]]
 }
 
-@test "a malformed state file fails safely" {
-  printf '%s\n' '{"version":1,"prs":[]}' > "$PSENTRY_STATE_FILE"
+@test "--print-lock-file reports the resolved lock path without running a pass" {
+  invoke_sentry --print-lock-file
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TEST_RUNTIME_DIR/sentry.lock" ]
+  [ "$(review_count)" -eq 0 ]
+  [ "$(oracle_count)" -eq 0 ]
+  [ ! -f "$GH_SHIM_STATE_DIR/gh.log" ]
+  [ ! -e "$TEST_RUNTIME_DIR/sentry.lock" ]
+  [ -z "$(find "$TEST_RUNTIME_DIR" -mindepth 1)" ]
+}
+
+@test "--print-lock-file does not contend with a held lock" {
+  export FLOCK_BUSY=1
+  invoke_sentry --print-lock-file
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TEST_RUNTIME_DIR/sentry.lock" ]
+}
+
+@test "a malformed legacy state file is ignored" {
+  legacy_state="$TEST_HOME/.local/state/psentry/state.json"
+  mkdir -p -- "$(dirname "$legacy_state")"
+  printf '%s\n' '{"version":1,"prs":[]}' > "$legacy_state"
   invoke_sentry
 
-  [ "$status" -ne 0 ]
-  [ "$(review_count)" -eq 0 ]
-  [[ "$output" == *"malformed or unsupported state file"* ]]
+  [ "$status" -eq 0 ]
+  [ "$(review_count)" -eq 1 ]
+  [ "$(< "$legacy_state")" = '{"version":1,"prs":[]}' ]
 }
 
 @test "discovery applies owner author open archived and draft filters" {
@@ -1157,6 +1141,18 @@ EOF
   grep -q -- '--order desc' "$GH_SHIM_STATE_DIR/gh.log"
 }
 
+@test "the default search limit does not permanently exclude older ready PRs" {
+  export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-sixty.json"
+  export GH_DRAFT_NUMBERS=
+
+  invoke_sentry --dry-run
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"eligible octo/example#60"* ]]
+  [[ "$output" == *"eligible octo/example#1"* ]]
+  grep -q -- '--limit 1000' "$GH_SHIM_STATE_DIR/gh.log"
+}
+
 @test "candidate processing order follows recency, not a fixed repository/number order" {
   export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
   export GH_READY_NUMBERS=
@@ -1170,7 +1166,7 @@ EOF
   [ "$processing_order" = "2,1," ]
 }
 
-@test "an interrupted slow candidate rotates behind later candidates on the next pass" {
+@test "a timed-out candidate does not starve later candidates" {
   export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=
@@ -1183,8 +1179,6 @@ EOF
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 0 ]
-  jq -e '.candidate_cursor == "octo/example#2"' \
-    "$PSENTRY_STATE_FILE"
 
   export ORACLE_SLEEP=2
   export PSENTRY_MAX_REVIEW_RUNTIME=1
@@ -1192,16 +1186,15 @@ EOF
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 1 ]
-  jq -e '.candidate_cursor == "octo/example#2"' \
-    "$PSENTRY_STATE_FILE"
+  [[ "$output" == *"candidate failed; continuing with remaining PRs"* ]]
 }
 
-@test "dry-run leaves configured storage and state permissions unchanged" {
-  invoke_sentry
-  [ "$status" -eq 0 ]
-
-  chmod 640 "$PSENTRY_STATE_FILE"
-  state_digest=$(sha256sum "$PSENTRY_STATE_FILE" | awk '{print $1}')
+@test "dry-run leaves configured storage and legacy state unchanged" {
+  legacy_state="$TEST_HOME/.local/state/psentry/state.json"
+  mkdir -p -- "$(dirname "$legacy_state")"
+  printf '%s\n' 'malformed legacy state' > "$legacy_state"
+  chmod 640 "$legacy_state"
+  state_digest=$(sha256sum "$legacy_state" | awk '{print $1}')
   dry_cache="$BATS_TEST_TMPDIR/dry-cache"
   dry_runtime="$BATS_TEST_TMPDIR/dry-runtime"
   dry_lock="$BATS_TEST_TMPDIR/dry-lock/sentry.lock"
@@ -1215,8 +1208,8 @@ EOF
   [ ! -e "$dry_cache" ]
   [ ! -e "$dry_runtime" ]
   [ ! -e "$(dirname "$dry_lock")" ]
-  [ "$(stat -c '%a' "$PSENTRY_STATE_FILE")" = 640 ]
-  [ "$(sha256sum "$PSENTRY_STATE_FILE" | awk '{print $1}')" = "$state_digest" ]
+  [ "$(stat -c '%a' "$legacy_state")" = 640 ]
+  [ "$(sha256sum "$legacy_state" | awk '{print $1}')" = "$state_digest" ]
 }
 
 @test "a transient error for one PR does not stop remaining candidates" {
@@ -1227,8 +1220,6 @@ EOF
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 1 ]
-  jq -e '(keys | sort) == ["candidate_cursor", "version"]' \
-    "$PSENTRY_STATE_FILE"
   [[ "$output" == *"candidate failed; continuing"* ]]
 }
 
@@ -1240,18 +1231,12 @@ EOF
   [[ "$output" == *"required command not found: not-an-oracle"* ]]
 }
 
-@test "systemd leaves trusted config loading to the executable" {
-  run grep -F "EnvironmentFile=" \
-    "$TEST_ROOT/systemd/psentry.service"
-
-  [ "$status" -eq 1 ]
-}
-
-@test "systemd keeps the X11 socket visible inside its private tmp" {
-  run grep -Fx "BindReadOnlyPaths=-/tmp/.X11-unix" \
-    "$TEST_ROOT/systemd/psentry.service"
-
-  [ "$status" -eq 0 ]
+@test "native lifecycle commands are removed" {
+  for command in install enable disable uninstall; do
+    invoke_sentry "$command"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"unknown argument: $command"* ]]
+  done
 }
 
 @test "an unsafe config file is rejected before it is sourced" {
@@ -1318,4 +1303,33 @@ EOF
     'so run the desktop only alongside trusted containers.' \
     "$TEST_ROOT/README.md"
   [ "$status" -eq 0 ]
+}
+
+@test "oracle-login serializes with a running pass via the shared lock" {
+  run grep -F 'psentry --print-lock-file' "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+
+  run grep -F "flock -n \"\${LOCK_FD}\"" "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "README documents removing a previously installed native systemd timer" {
+  run grep -F 'systemctl --user disable --now psentry.timer' "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+
+  run grep -F '.config/systemd/user/psentry.timer' "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "README documents stopping an already-running native service before removing units" {
+  run grep -F 'systemctl --user stop psentry.service' "$TEST_ROOT/README.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "gh-login serializes with a running pass via the shared lock" {
+  run grep -A24 -F 'gh_login()' "$TEST_ROOT/container.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'psentry --print-lock-file'* ]]
+  [[ "$output" == *"flock -n \"\${LOCK_FD}\""* ]]
+  [[ "$output" == *'exec gh auth login'* ]]
 }
