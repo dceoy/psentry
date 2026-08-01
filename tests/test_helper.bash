@@ -63,6 +63,7 @@ setup_sentry_test() {
   export PSENTRY_GITHUB_OWNER=octo
   export PSENTRY_GITHUB_AUTHOR=octo
   export PSENTRY_PROMPT_PATH="$TEST_ROOT/share/psentry/review-prompt.md"
+  export PSENTRY_STATE_FILE="$TEST_HOME/.local/state/psentry/state.json"
   export PSENTRY_RUNTIME_DIR="$TEST_RUNTIME_DIR"
   export PSENTRY_CACHE_DIR="$TEST_CACHE_DIR"
   export PSENTRY_MAX_REVIEW_RUNTIME=5

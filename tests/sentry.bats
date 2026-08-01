@@ -55,12 +55,18 @@ draft changed	.	.draft = true	baseline	null
 EOF
 }
 
-@test "a first pass schedules a new eligible PR without local scheduling state" {
+@test "a first pass schedules a new eligible PR and checkpoints its start" {
   invoke_sentry
 
   [ "$status" -eq 0 ]
   [ "$(review_count)" -eq 1 ]
-  [ ! -e "$TEST_HOME/.local/state/psentry/state.json" ]
+  jq -e '
+    .version == 1
+    and .candidate_cursor == "octo/example#1"
+    and (keys | sort) == ["candidate_cursor", "version"]
+  ' "$PSENTRY_STATE_FILE"
+  [ "$(stat -c '%a' "$PSENTRY_STATE_FILE")" = 600 ]
+  [ "$(stat -c '%a' "$(dirname "$PSENTRY_STATE_FILE")")" = 700 ]
 }
 
 @test "an unchanged fingerprint never invokes Oracle or posts twice" {
@@ -776,7 +782,7 @@ EOF
   [ "$(oracle_count)" -eq 1 ]
 }
 
-@test "the sentry marker is authoritative across stateless passes" {
+@test "the sentry marker remains authoritative across cursor rotations" {
   invoke_sentry
   [ "$status" -eq 0 ]
 
@@ -1097,15 +1103,38 @@ EOF
   [ "$output" = "$TEST_RUNTIME_DIR/sentry.lock" ]
 }
 
-@test "a malformed legacy state file is ignored" {
-  legacy_state="$TEST_HOME/.local/state/psentry/state.json"
-  mkdir -p -- "$(dirname "$legacy_state")"
-  printf '%s\n' '{"version":1,"prs":[]}' > "$legacy_state"
+@test "a malformed rotation state file fails safely" {
+  mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
+  printf '%s\n' '{"version":1,"prs":[]}' > "$PSENTRY_STATE_FILE"
   invoke_sentry
 
-  [ "$status" -eq 0 ]
-  [ "$(review_count)" -eq 1 ]
-  [ "$(< "$legacy_state")" = '{"version":1,"prs":[]}' ]
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"malformed or unsupported state file"* ]]
+}
+
+@test "a dangling rotation state symlink fails safely" {
+  mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
+  ln -s -- "$BATS_TEST_TMPDIR/missing-state.json" "$PSENTRY_STATE_FILE"
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [ -L "$PSENTRY_STATE_FILE" ]
+  [[ "$output" == *"state file must be a regular, non-symlink file"* ]]
+}
+
+@test "multiple rotation state documents fail safely" {
+  mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
+  printf '%s\n' \
+    '{"version":1,"candidate_cursor":"octo/example#1"}' \
+    '{"version":1,"candidate_cursor":"octo/example#1"}' \
+    > "$PSENTRY_STATE_FILE"
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [[ "$output" == *"malformed or unsupported state file"* ]]
 }
 
 @test "discovery applies owner author open archived and draft filters" {
@@ -1153,17 +1182,27 @@ EOF
   grep -q -- '--limit 1000' "$GH_SHIM_STATE_DIR/gh.log"
 }
 
-@test "candidate processing order follows recency, not a fixed repository/number order" {
+@test "candidate start advances once per pass with a bounded persistent rotation" {
   export GH_READY_SEARCH_FIXTURE="$TEST_ROOT/tests/fixtures/pr-search-ready-recency.json"
   export GH_READY_NUMBERS=
   export GH_DRAFT_NUMBERS=
+  export GH_INCLUDE_POSTED_MARKER=0
 
-  invoke_sentry --dry-run
+  invoke_sentry
 
   [ "$status" -eq 0 ]
   processing_order=$(grep -o 'eligible octo/example#[0-9]*' <<< "$output" \
     | grep -o '[0-9]*$' | tr '\n' ',')
   [ "$processing_order" = "2,1," ]
+  jq -e '.candidate_cursor == "octo/example#2"' "$PSENTRY_STATE_FILE"
+
+  invoke_sentry
+
+  [ "$status" -eq 0 ]
+  processing_order=$(grep -o 'eligible octo/example#[0-9]*' <<< "$output" \
+    | grep -o '[0-9]*$' | tr '\n' ',')
+  [ "$processing_order" = "1,2," ]
+  jq -e '.candidate_cursor == "octo/example#1"' "$PSENTRY_STATE_FILE"
 }
 
 @test "a timed-out candidate does not starve later candidates" {
@@ -1179,6 +1218,7 @@ EOF
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 0 ]
+  jq -e '.candidate_cursor == "octo/example#2"' "$PSENTRY_STATE_FILE"
 
   export ORACLE_SLEEP=2
   export PSENTRY_MAX_REVIEW_RUNTIME=1
@@ -1186,15 +1226,16 @@ EOF
 
   [ "$status" -ne 0 ]
   [ "$(review_count)" -eq 1 ]
+  jq -e '.candidate_cursor == "octo/example#1"' "$PSENTRY_STATE_FILE"
   [[ "$output" == *"candidate failed; continuing with remaining PRs"* ]]
 }
 
-@test "dry-run leaves configured storage and legacy state unchanged" {
-  legacy_state="$TEST_HOME/.local/state/psentry/state.json"
-  mkdir -p -- "$(dirname "$legacy_state")"
-  printf '%s\n' 'malformed legacy state' > "$legacy_state"
-  chmod 640 "$legacy_state"
-  state_digest=$(sha256sum "$legacy_state" | awk '{print $1}')
+@test "dry-run leaves configured storage and rotation state unchanged" {
+  mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
+  printf '%s\n' '{"version":1,"candidate_cursor":"octo/example#1"}' \
+    > "$PSENTRY_STATE_FILE"
+  chmod 640 "$PSENTRY_STATE_FILE"
+  state_digest=$(sha256sum "$PSENTRY_STATE_FILE" | awk '{print $1}')
   dry_cache="$BATS_TEST_TMPDIR/dry-cache"
   dry_runtime="$BATS_TEST_TMPDIR/dry-runtime"
   dry_lock="$BATS_TEST_TMPDIR/dry-lock/sentry.lock"
@@ -1208,8 +1249,8 @@ EOF
   [ ! -e "$dry_cache" ]
   [ ! -e "$dry_runtime" ]
   [ ! -e "$(dirname "$dry_lock")" ]
-  [ "$(stat -c '%a' "$legacy_state")" = 640 ]
-  [ "$(sha256sum "$legacy_state" | awk '{print $1}')" = "$state_digest" ]
+  [ "$(stat -c '%a' "$PSENTRY_STATE_FILE")" = 640 ]
+  [ "$(sha256sum "$PSENTRY_STATE_FILE" | awk '{print $1}')" = "$state_digest" ]
 }
 
 @test "a transient error for one PR does not stop remaining candidates" {

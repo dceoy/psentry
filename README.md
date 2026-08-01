@@ -11,8 +11,9 @@ The native Linux implementation deliberately stays close to shell glue:
 - one Bash entrypoint;
 - `gh` for every GitHub read and write;
 - `jq` and SHA-256 for normalized snapshots and fingerprints;
+- one atomic local JSON file containing only the candidate-rotation cursor;
 - `flock` for process-wide exclusion;
-- deterministic, stateless candidate ordering.
+- deterministic candidate ordering with bounded restart rotation.
 
 There is no webhook server, database, queue, repository clone, or custom
 GitHub client. The Apple Container environment described below adds the only
@@ -232,6 +233,7 @@ The sourced file takes precedence over exported environment values; the
 | `PSENTRY_PROMPT_PATH`           | installed prompt                     | Independently editable review instructions                                               |
 | `PSENTRY_MAX_REVIEW_RUNTIME`    | `1800`                               | Oracle timeout in whole seconds                                                          |
 | `PSENTRY_MAX_REVIEW_BODY_BYTES` | `60000`                              | Maximum generated review plus marker                                                     |
+| `PSENTRY_STATE_FILE`            | `$XDG_STATE_HOME/psentry/state.json` | Persistent candidate-start cursor only                                                   |
 | `PSENTRY_CACHE_DIR`             | `$XDG_CACHE_HOME/psentry`            | Private cache directory                                                                  |
 | `PSENTRY_RUNTIME_DIR`           | `$XDG_RUNTIME_DIR/psentry-$UID`      | Lock and secure temporary workspace                                                      |
 | `PSENTRY_LOCK_FILE`             | runtime directory `sentry.lock`      | Global non-blocking lock                                                                 |
@@ -274,7 +276,7 @@ Oracle receives only the normalized pull request metadata, unified diff, and
 the local review prompt. Prior trusted sentry publications are excluded from
 that metadata. The MVP does not clone or inspect the full repository. See
 [docs/architecture.md](docs/architecture.md) for the snapshot schema,
-fingerprint, race handling, and stateless scheduling model.
+fingerprint, race handling, and bounded scheduling model.
 
 ## Polling, ordering, and concurrency
 
@@ -287,21 +289,14 @@ The executable uses a non-blocking global `flock`. If a manual pass
 overlaps an existing pass, the new process logs that another invocation holds
 the lock and exits successfully without opening another browser session.
 
-Every pass processes the normalized candidate list in deterministic
-most-recently-updated order. There is no local cursor. GitHub markers skip
-unchanged PRs quickly, each Oracle review has a bounded runtime, and failures
-continue to the remaining candidates, so an early failing or slow candidate
-cannot indefinitely starve later candidates within the search window during an
-allowed-to-complete pass. Concurrent manual runs exit through `flock`, and
-long-running passes simply delay the next fixed-delay interval without
-overlap.
-
-Repeated container restarts are an accepted exception to that guarantee: if
-the container keeps restarting before the first candidate's Oracle review
-completes or reaches its bounded timeout, every restart retries that same
-candidate and later candidates may never be attempted, because an
-interrupted review publishes no marker to distinguish it from an unstarted
-one (see [docs/architecture.md](docs/architecture.md)).
+Before processing candidates, every non-dry-run pass atomically checkpoints
+its first candidate as the only local scheduling state. The next pass starts
+after that candidate, so a stable list of `N` candidates exposes every
+starting position within at most `N` invocations regardless of restart timing.
+GitHub markers skip unchanged PRs, each Oracle review has a bounded runtime,
+and failures continue to the remaining candidates. Concurrent manual runs
+exit through `flock`, and long-running passes simply delay the next fixed-delay
+interval without overlap.
 
 The search window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (see
 [docs/architecture.md](docs/architecture.md) for what happens, and why it is
@@ -332,10 +327,11 @@ systemctl --user daemon-reload
 
 ### Upgrading from v5 markers
 
-Version 6 deliberately has no v5 marker or local per-PR state compatibility
-parser. Each open PR receives a one-time review or baseline event that
-establishes v6 marker history. Legacy local state files are no longer read and
-may be removed; malformed legacy files do not affect startup.
+Version 6 deliberately has no v5 marker or local per-PR event-state
+compatibility parser. Each open PR receives a one-time review or baseline
+event that establishes v6 marker history. The local state file contains only
+the rotation cursor; replace an incompatible older file with `{"version":1}`
+before the first pass.
 
 Do not expose a Chrome DevTools endpoint on a public interface. If attaching to
 an already-running browser, bind remote debugging to loopback and protect the
@@ -356,6 +352,8 @@ Common cases:
   Oracle prompt succeeds, and allow the next pass to retry.
 - **Oracle timeout:** inspect container logs and the Oracle session; increase
   `PSENTRY_MAX_REVIEW_RUNTIME` only when longer runs are expected.
+- **Malformed state:** preserve the named file for diagnosis, then replace it
+  with `{"version":1}` or remove it to restart candidate rotation.
 - **Head changed during review:** the generated result is discarded without
   posting. The new head is reviewed on the next pass.
 - **Review posted but the process exits:** GitHub acceptance is the commit
@@ -370,8 +368,8 @@ Common cases:
 - Configuration is executable because it is sourced. The sentry rejects
   symlinks, unexpected owners, and group/world-writable trusted files or their
   immediate parent directories.
-- Runtime, cache, and Oracle directories are user-owned mode `0700`; temporary
-  files are mode `0600` under the process umask.
+- State, runtime, cache, and Oracle directories are user-owned mode `0700`;
+  state and temporary files are mode `0600` under the process umask.
 - GitHub publication is hard-coded to `gh pr review --comment`; Oracle output
   cannot choose approval or request-changes behavior.
 - PR text and diffs are untrusted model input. The prompt limits the task to
@@ -392,9 +390,11 @@ browser, authenticate to ChatGPT, or write to GitHub:
 This formats Markdown and shell scripts, runs ShellCheck, and runs Bats
 scenarios covering the table-driven decision matrix, readiness, external
 activity, marker filtering and recovery, canonical reordering, Oracle
-errors/timeouts/empty output, stale inputs, stateless ordering, concurrency,
-legacy-state tolerance, discovery filters, and per-PR error isolation. It also lints
-and fixes the GitHub Actions workflows with zizmor, actionlint, yamllint, and
-checkov. CI requires no repository secrets.
+errors/timeouts/empty output, stale inputs, bounded rotation, concurrency,
+cursor persistence, malformed state, discovery filters, and per-PR error
+isolation. It also lints and fixes the GitHub Actions workflows with zizmor,
+actionlint, yamllint, and Checkov. CI invokes this same script through the
+reusable shell-project workflow, then runs `bats tests/container.bats`; it
+requires no repository secrets.
 
 The GitHub Actions workflow has read-only repository contents permission.

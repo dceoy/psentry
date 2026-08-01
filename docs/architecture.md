@@ -7,13 +7,14 @@ Each `psentry` invocation runs exactly one pass:
 1. validate trusted configuration and required commands;
 2. acquire the non-blocking global `flock`;
 3. identify the authenticated GitHub account;
-4. search open, non-archived pull requests with the configured owner/author
+4. load and validate the local candidate-rotation cursor;
+5. search open, non-archived pull requests with the configured owner/author
    filters;
-5. collect and normalize each pull request independently;
-6. reduce the current facts and latest trusted GitHub marker to one action;
-7. invoke Oracle only for a meaningful update;
-8. re-read the PR state and head;
-9. publish a comment-only review, making GitHub acceptance the commit point.
+6. collect and normalize each pull request independently;
+7. reduce the current facts and latest trusted GitHub marker to one action;
+8. invoke Oracle only for a meaningful update;
+9. re-read the PR state and head;
+10. publish a comment-only review, making GitHub acceptance the commit point.
 
 Errors for one pull request are logged and do not prevent remaining candidates
 from being processed. The pass still exits non-zero so its caller can record
@@ -23,41 +24,30 @@ The sentry performs two bounded searches, ordered by most recent update so
 newly active pull requests cannot remain behind a fixed set of older results:
 `draft:false` supplies eligible work, while `draft:true` supplies observations
 needed to recognize a later draft-to-ready transition. Drafts are never passed
-to Oracle. The normalized list keeps that deterministic most-recently-updated
-order on every pass and is not rotated through local persistence.
+to Oracle. Before candidate processing begins, the sentry atomically records
+the first candidate as a rotation cursor. The next invocation starts after
+that cursor. For a stable list of `N` candidates, this advances the starting
+position once per invocation and visits every position within at most `N`
+invocations, independent of restart or polling cadence.
 
-This stateless order does not starve later candidates within a single search
-window that is allowed to run to completion: unchanged PRs with valid markers
-are skipped, each Oracle attempt has a bounded runtime, and a failed attempt
-does not stop the remaining candidates. More eligible PRs make a pass longer
-rather than imposing a per-pass work budget. Concurrent manual passes exit
-through the global `flock`, and fixed-delay polling never overlaps passes.
-
-Repeated container restarts are a different, unresolved risk that keeps #24
-open rather than satisfying it: restarting recomputes the same newest-first
-order from current GitHub data, so if the container is restarted before the
-first candidate's Oracle review completes or reaches its bounded timeout,
-every restart retries that same candidate from scratch, and later eligible
-candidates may never be attempted. An interrupted review publishes no GitHub
-marker, so nothing in the search results or marker history can distinguish a
-candidate that keeps failing to finish from one that has not started yet,
-and no ordering rule derived purely from current GitHub data can rotate past
-it without further work. #24 should stay open until this is either fixed
-(for example a stateless, fine-grained, wall-clock-derived rotation of the
-starting candidate, or bounded local rotation state scoped to this case) or
-explicitly accepted as a known limitation by a maintainer.
+Within a completed pass, unchanged PRs with valid markers are skipped, each
+Oracle attempt has a bounded runtime, and a failed attempt does not stop the
+remaining candidates. During repeated container restarts, the durable cursor
+advances the starting point instead of repeatedly selecting a fixed first PR.
+More eligible PRs make a pass longer rather than imposing a per-pass work
+budget. Concurrent manual passes exit through the global `flock`, and
+fixed-delay polling never overlaps passes.
 
 The window itself is bounded by `PSENTRY_PR_SEARCH_LIMIT` (default and
 maximum `1000`, GitHub's own search API ceiling per query). If the number of
 open pull requests matching the configured owner/author filters — ready and
 draft combined — ever exceeds that limit, the oldest matches fall outside the
 window and are excluded from every pass, not just the current one, because
-the search is stateless and newest-first: nothing rotates them back in. This
-repository does not expect that volume for a single owner/author and
-therefore does not implement search partitioning or cursor rotation to cover
-it; if it becomes a real constraint, partition the search deterministically
-(for example by repository or by `updated`/`created` date windows) or
-reintroduce bounded local rotation state.
+each search remains newest-first and the cursor only rotates the returned
+window. This repository does not expect that volume for a single owner/author
+and therefore does not implement search partitioning to cover it; if it
+becomes a real constraint, partition the search deterministically (for example
+by repository or by `updated`/`created` date windows).
 
 ## Normalized snapshot schema
 
@@ -192,10 +182,22 @@ from the trigger projection.
 
 ## Persistent state
 
-There is no local scheduling or per-PR state. GitHub markers are the only
-persistent event history, and candidate order is derived from each current
-search response. Legacy cursor files are not read, so missing or malformed
-legacy files cannot affect startup, ordering, or review decisions.
+The local JSON document stores no per-PR observations or review records. It
+contains only the cursor used to rotate the starting candidate between passes:
+
+```json
+{
+  "version": 1,
+  "candidate_cursor": "owner/repository#123"
+}
+```
+
+The cursor is checkpointed once before a non-empty, non-dry-run pass begins.
+Writes use `mktemp` in the state file's directory, complete JSON validation,
+mode `0600`, and `mv` on the same filesystem. An absent file is a valid empty
+cursor; malformed or unsupported state fails closed. Deleting the file can
+change only candidate order: GitHub markers remain the authoritative event
+history and duplicate-review record.
 
 ## Publication and races
 
