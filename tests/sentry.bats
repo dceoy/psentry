@@ -1113,6 +1113,17 @@ EOF
   [[ "$output" == *"malformed or unsupported state file"* ]]
 }
 
+@test "a dangling rotation state symlink fails safely" {
+  mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
+  ln -s -- "$BATS_TEST_TMPDIR/missing-state.json" "$PSENTRY_STATE_FILE"
+  invoke_sentry
+
+  [ "$status" -ne 0 ]
+  [ "$(review_count)" -eq 0 ]
+  [ -L "$PSENTRY_STATE_FILE" ]
+  [[ "$output" == *"state file must be a regular, non-symlink file"* ]]
+}
+
 @test "multiple rotation state documents fail safely" {
   mkdir -p -- "$(dirname "$PSENTRY_STATE_FILE")"
   printf '%s\n' \

@@ -347,7 +347,7 @@ cleanup() {
 }
 
 load_state() {
-  if [[ ! -e "$PSENTRY_STATE_FILE" ]]; then
+  if [[ ! -e "$PSENTRY_STATE_FILE" && ! -L "$PSENTRY_STATE_FILE" ]]; then
     STATE_JSON='{"version":'"$STATE_SCHEMA_VERSION"'}'
     return 0
   fi
